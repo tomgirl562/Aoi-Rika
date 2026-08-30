@@ -13,6 +13,7 @@ create table if not exists accounts (
   id uuid primary key,
   user_id uuid not null references auth.users(id) on delete cascade,
   name text not null,
+  institution text, -- e.g. BPI, GoTyme, Maya, Cash - free text, optional
   kind text not null check (kind in ('income', 'spending', 'savings', 'other')),
   starting_balance bigint not null default 0, -- centavos
   archived_at timestamptz,

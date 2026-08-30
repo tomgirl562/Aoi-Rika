@@ -2,6 +2,7 @@ import { HashRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AuthProvider, useAuth } from './lib/auth'
 import { BottomNav } from './components/BottomNav'
 import { AuthPage } from './pages/AuthPage'
+import { BalancesPage } from './pages/BalancesPage'
 import { Dashboard } from './pages/Dashboard'
 import { WeeklyCheckIn } from './pages/WeeklyCheckIn'
 import { TransactionsPage } from './pages/TransactionsPage'
@@ -30,6 +31,7 @@ function Shell() {
       <main className="app-main">
         <Routes>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/balances" element={<BalancesPage />} />
           <Route path="/weekly" element={<WeeklyCheckIn />} />
           <Route path="/transactions" element={<TransactionsPage />} />
           <Route path="/reimbursements" element={<ReimbursementsPage />} />

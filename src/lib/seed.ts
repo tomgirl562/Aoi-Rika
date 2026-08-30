@@ -2,10 +2,12 @@ import { db } from './db'
 import { createRecord } from './mutate'
 import type { Account, Category, UserSettings } from './types'
 
-const DEFAULT_ACCOUNTS: Array<Pick<Account, 'name' | 'kind' | 'starting_balance' | 'archived_at'>> = [
-  { name: 'Payroll', kind: 'income', starting_balance: 0, archived_at: null },
-  { name: 'Daily Essentials', kind: 'spending', starting_balance: 0, archived_at: null },
-  { name: 'Personal Savings', kind: 'savings', starting_balance: 0, archived_at: null },
+const DEFAULT_ACCOUNTS: Array<Pick<Account, 'name' | 'institution' | 'kind' | 'starting_balance' | 'archived_at'>> = [
+  { name: 'Payroll', institution: 'BPI', kind: 'income', starting_balance: 0, archived_at: null },
+  { name: 'Family Wallet', institution: 'BPI', kind: 'other', starting_balance: 0, archived_at: null },
+  { name: 'Savings', institution: 'GoTyme', kind: 'savings', starting_balance: 0, archived_at: null },
+  { name: 'Allowance', institution: 'Maya', kind: 'spending', starting_balance: 0, archived_at: null },
+  { name: 'Cash on Hand', institution: null, kind: 'other', starting_balance: 0, archived_at: null },
 ]
 
 const DEFAULT_CATEGORIES: Array<Pick<Category, 'name' | 'is_default' | 'archived_at'>> = [

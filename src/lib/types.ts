@@ -6,6 +6,7 @@ export interface Account {
   id: string
   user_id: string
   name: string
+  institution: string | null // e.g. BPI, GoTyme, Maya, Cash - free text, optional
   kind: AccountKind
   starting_balance: number
   archived_at: string | null

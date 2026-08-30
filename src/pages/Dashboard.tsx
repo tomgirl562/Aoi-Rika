@@ -61,7 +61,10 @@ export function Dashboard() {
       .sort((a, b) => b.value - a.value)
   }, [categories, transactions, range])
 
+  const activeAccounts = accounts.filter((a) => !a.archived_at)
   const balances = allAccountBalances(accounts, transactions)
+  const totalBalance = activeAccounts.reduce((sum, a) => sum + (balances.get(a.id) ?? 0), 0)
+  const topAccounts = [...activeAccounts].sort((a, b) => (balances.get(b.id) ?? 0) - (balances.get(a.id) ?? 0)).slice(0, 4)
   const reimbTotals = outstandingTotals(reimbursements)
   const activeGoals = goals.filter((g) => g.status === 'active')
 
@@ -94,6 +97,27 @@ export function Dashboard() {
           This month
         </button>
       </div>
+
+      <section className="card" style={{ marginBottom: '1rem', textAlign: 'center' }}>
+        <div className="stat-label">Total money you currently hold</div>
+        <div style={{ fontSize: '2rem', fontWeight: 800, margin: '0.25rem 0', color: 'var(--accent)' }}>
+          {formatMoney(totalBalance)}
+        </div>
+        <div style={{ textAlign: 'left', marginTop: '0.5rem' }}>
+          {topAccounts.map((a) => (
+            <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.2rem 0', fontSize: '0.85rem' }}>
+              <span>
+                {a.institution && <span style={{ color: 'var(--text-muted)' }}>{a.institution} · </span>}
+                {a.name}
+              </span>
+              <span style={{ fontWeight: 600 }}>{formatMoney(balances.get(a.id) ?? 0)}</span>
+            </div>
+          ))}
+        </div>
+        <Link to="/balances" style={{ fontSize: '0.8rem', color: 'var(--accent)' }}>
+          View full breakdown →
+        </Link>
+      </section>
 
       <section className="card" style={{ marginBottom: '1rem' }}>
         <h2 style={{ fontSize: '0.95rem', marginTop: 0 }}>In vs out</h2>
@@ -139,18 +163,6 @@ export function Dashboard() {
         <Link to="/places" style={{ fontSize: '0.8rem', color: 'var(--accent)' }}>
           View all places →
         </Link>
-      </section>
-
-      <section className="card" style={{ marginBottom: '1rem' }}>
-        <h2 style={{ fontSize: '0.95rem', marginTop: 0 }}>Accounts</h2>
-        {accounts
-          .filter((a) => !a.archived_at)
-          .map((a) => (
-            <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.3rem 0' }}>
-              <span>{a.name}</span>
-              <span style={{ fontWeight: 600 }}>{formatMoney(balances.get(a.id) ?? 0)}</span>
-            </div>
-          ))}
       </section>
 
       <section className="card" style={{ marginBottom: '1rem' }}>
