@@ -16,6 +16,8 @@ export function SettingsPage() {
   const [newAccountKind, setNewAccountKind] = useState<AccountKind>('other')
   const [newCategoryName, setNewCategoryName] = useState('')
   const [safetyNetInput, setSafetyNetInput] = useState('')
+  const [allowanceInput, setAllowanceInput] = useState('')
+  const [allowancePeriodInput, setAllowancePeriodInput] = useState<'weekly' | 'monthly'>('weekly')
 
   if (!userId) return null
 
@@ -61,6 +63,16 @@ export function SettingsPage() {
     setSafetyNetInput('')
   }
 
+  async function applyAllowance() {
+    if (!settings) return
+    const trimmed = allowanceInput.trim()
+    await updateRecord<UserSettings>('user_settings', settings.id, {
+      allowance_amount: trimmed === '' ? null : pesosToCentavos(Number(trimmed)),
+      allowance_period: allowancePeriodInput,
+    })
+    setAllowanceInput('')
+  }
+
   return (
     <div>
       <PageHeader title="Settings" />
@@ -73,6 +85,40 @@ export function SettingsPage() {
           </p>
         </div>
       )}
+
+      <section className="card" style={{ marginBottom: '1rem' }}>
+        <h2 style={{ fontSize: '1rem', marginTop: 0 }}>Allowance</h2>
+        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+          Set what you get per week or month and the Weekly check-in will split it evenly into a daily target,
+          checked against what you can actually safely spend.
+        </p>
+        <p style={{ fontSize: '0.85rem' }}>
+          Current:{' '}
+          {settings?.allowance_amount != null
+            ? `${formatMoney(settings.allowance_amount)} / ${settings.allowance_period}`
+            : 'not set'}
+        </p>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <input
+            className="input"
+            type="number"
+            placeholder="e.g. 3500"
+            value={allowanceInput}
+            onChange={(e) => setAllowanceInput(e.target.value)}
+          />
+          <select
+            className="input"
+            value={allowancePeriodInput}
+            onChange={(e) => setAllowancePeriodInput(e.target.value as 'weekly' | 'monthly')}
+          >
+            <option value="weekly">per week</option>
+            <option value="monthly">per month</option>
+          </select>
+          <button className="btn btn-primary" onClick={applyAllowance}>
+            Set
+          </button>
+        </div>
+      </section>
 
       <section className="card" style={{ marginBottom: '1rem' }}>
         <h2 style={{ fontSize: '1rem', marginTop: 0 }}>Weekly safety net</h2>

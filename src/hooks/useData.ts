@@ -5,6 +5,7 @@ import type {
   Account,
   Category,
   GoalContribution,
+  Merchant,
   Reimbursement,
   SavingsGoal,
   Transaction,
@@ -24,6 +25,12 @@ export function useAccounts(): Account[] {
 export function useCategories(): Category[] {
   const { userId } = useAuth()
   const rows = useLiveQuery(() => (userId ? db.categories.where('user_id').equals(userId).toArray() : []), [userId])
+  return notDeleted(rows)
+}
+
+export function useMerchants(): Merchant[] {
+  const { userId } = useAuth()
+  const rows = useLiveQuery(() => (userId ? db.merchants.where('user_id').equals(userId).toArray() : []), [userId])
   return notDeleted(rows)
 }
 

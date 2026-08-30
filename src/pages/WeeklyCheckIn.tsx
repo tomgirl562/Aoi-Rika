@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { useAccounts, useCategories, useReimbursements, useSettings, useTransactions } from '../hooks/useData'
+import { computeAllowancePacing } from '../lib/calc/allowance'
 import { accountBalance } from '../lib/calc/balances'
 import { outstandingTotals } from '../lib/calc/reimbursements'
 import {
@@ -23,7 +24,7 @@ export function WeeklyCheckIn() {
   const now = new Date()
   const weekStartDay = settings?.week_start_day ?? 1
 
-  const { totals, nudges, safeToSpend, spendingAccount, week } = useMemo(() => {
+  const { totals, nudges, safeToSpend, spendingAccount, week, allowancePacing } = useMemo(() => {
     const week = currentWeekRange(now, weekStartDay)
     const totals = weeklyTotals(transactions, week)
     const nudges = buildCategoryNudges(transactions, categories, now, weekStartDay)
@@ -37,7 +38,14 @@ export function WeeklyCheckIn() {
     const iOwe = outstandingTotals(reimbursements).iOwe
     const balance = spendingAccount ? accountBalance(spendingAccount, transactions) : 0
     const safeToSpend = computeSafeToSpend(balance, safetyNet, iOwe)
-    return { totals, nudges, safeToSpend, spendingAccount, week }
+    const allowancePacing = computeAllowancePacing(
+      settings?.allowance_amount ?? null,
+      settings?.allowance_period ?? 'weekly',
+      now,
+      weekStartDay,
+      safeToSpend.safeToSpend,
+    )
+    return { totals, nudges, safeToSpend, spendingAccount, week, allowancePacing }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transactions, categories, accounts, settings, reimbursements])
 
@@ -66,6 +74,29 @@ export function WeeklyCheckIn() {
           </div>
         )}
       </div>
+
+      {allowancePacing && (
+        <div className="card" style={{ marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+            <div className="stat-label">Today's budget</div>
+            <span className={`pill ${allowancePacing.sustainable ? 'pill-good' : 'pill-watch'}`}>
+              {allowancePacing.sustainable ? 'On plan' : 'Heads up'}
+            </span>
+          </div>
+          <div style={{ fontSize: '1.6rem', fontWeight: 800, margin: '0.25rem 0' }}>
+            {formatMoney(allowancePacing.dailyBudget)}
+            <span style={{ fontSize: '0.85rem', fontWeight: 500, color: 'var(--text-muted)' }}>
+              {' '}
+              / day ({settings?.allowance_period})
+            </span>
+          </div>
+          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+            {allowancePacing.sustainable
+              ? `That plan fits your ${formatMoney(allowancePacing.safeToSpend)} safe-to-spend for the ${allowancePacing.daysLeftInPeriod} day${allowancePacing.daysLeftInPeriod === 1 ? '' : 's'} left.`
+              : `At this rate you'd need ${formatMoney(allowancePacing.neededForRestOfPeriod)} for the ${allowancePacing.daysLeftInPeriod} day${allowancePacing.daysLeftInPeriod === 1 ? '' : 's'} left, but you only have ${formatMoney(allowancePacing.safeToSpend)} safe to spend right now.`}
+          </div>
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem' }}>
         <div className="stat-tile" style={{ flex: 1 }}>

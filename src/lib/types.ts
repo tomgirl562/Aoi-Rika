@@ -25,6 +25,17 @@ export interface Category {
   deleted_at: string | null
 }
 
+export interface Merchant {
+  id: string
+  user_id: string
+  name: string
+  type: string // free text: Restaurant, Grocery, Online Shop, Subscription, Grab Food, or anything else
+  archived_at: string | null
+  created_at: string
+  updated_at: string
+  deleted_at: string | null
+}
+
 export type TransactionType = 'income' | 'expense' | 'transfer'
 
 export interface Transaction {
@@ -36,6 +47,7 @@ export interface Transaction {
   from_account_id: string | null
   to_account_id: string | null
   category_id: string | null
+  merchant_id: string | null // expenses only: which establishment
   note: string | null
   is_reimbursement: boolean
   reimbursement_id: string | null
@@ -96,6 +108,8 @@ export interface UserSettings {
   currency: string
   safety_net_auto_months: number
   safety_net_override_amount: number | null
+  allowance_amount: number | null // centavos; null = allowance pacing not configured
+  allowance_period: 'weekly' | 'monthly'
   created_at: string
   updated_at: string
 }
@@ -110,6 +124,7 @@ export interface Syncable {
 
 export type LocalAccount = Account & Syncable
 export type LocalCategory = Category & Syncable
+export type LocalMerchant = Merchant & Syncable
 export type LocalTransaction = Transaction & Syncable
 export type LocalReimbursement = Reimbursement & Syncable
 export type LocalSavingsGoal = SavingsGoal & Syncable

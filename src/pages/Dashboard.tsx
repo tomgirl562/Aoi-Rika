@@ -7,15 +7,17 @@ import {
   useCategories,
   useGoalContributions,
   useGoals,
+  useMerchants,
   useReimbursements,
   useSettings,
   useTransactions,
 } from '../hooks/useData'
 import { allAccountBalances } from '../lib/calc/balances'
 import { projectGoal } from '../lib/calc/goals'
+import { computeMerchantStats } from '../lib/calc/merchants'
 import { outstandingTotals } from '../lib/calc/reimbursements'
 import { categorySpendInRange, weeklyTotals } from '../lib/calc/weekly'
-import { currentMonthRange, currentWeekRange } from '../lib/dates'
+import { currentMonthRange, currentWeekRange, isWithin } from '../lib/dates'
 import { formatMoney } from '../lib/money'
 
 const SERIES_VARS = [
@@ -32,6 +34,7 @@ const SERIES_VARS = [
 export function Dashboard() {
   const accounts = useAccounts()
   const categories = useCategories()
+  const merchants = useMerchants()
   const transactions = useTransactions()
   const reimbursements = useReimbursements()
   const goals = useGoals()
@@ -61,6 +64,15 @@ export function Dashboard() {
   const balances = allAccountBalances(accounts, transactions)
   const reimbTotals = outstandingTotals(reimbursements)
   const activeGoals = goals.filter((g) => g.status === 'active')
+
+  const topPlaces = useMemo(() => {
+    const inRange = transactions.filter((tx) => isWithin(new Date(tx.occurred_at), range))
+    return computeMerchantStats(
+      merchants.filter((m) => !m.archived_at),
+      inRange,
+    ).slice(0, 3)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [merchants, transactions, range])
 
   return (
     <div>
@@ -104,6 +116,29 @@ export function Dashboard() {
         ) : (
           <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>No spending logged for this period yet.</p>
         )}
+      </section>
+
+      <section className="card" style={{ marginBottom: '1rem' }}>
+        <h2 style={{ fontSize: '0.95rem', marginTop: 0 }}>Top places</h2>
+        {topPlaces.length === 0 ? (
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+            No establishments tagged for this period yet.
+          </p>
+        ) : (
+          topPlaces.map(({ merchant, totalSpent, visitCount }) => (
+            <div key={merchant.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.3rem 0' }}>
+              <span>
+                {merchant.name} <span className="pill">{merchant.type}</span>
+              </span>
+              <span style={{ fontWeight: 600 }}>
+                {formatMoney(totalSpent)} <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>· {visitCount}x</span>
+              </span>
+            </div>
+          ))
+        )}
+        <Link to="/places" style={{ fontSize: '0.8rem', color: 'var(--accent)' }}>
+          View all places →
+        </Link>
       </section>
 
       <section className="card" style={{ marginBottom: '1rem' }}>

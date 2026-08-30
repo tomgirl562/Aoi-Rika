@@ -32,6 +32,17 @@ create table if not exists categories (
   deleted_at timestamptz
 );
 
+create table if not exists merchants (
+  id uuid primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  name text not null,
+  type text not null, -- free text: Restaurant, Grocery, Online Shop, Subscription, Grab Food, or anything the user types
+  archived_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  deleted_at timestamptz
+);
+
 create table if not exists transactions (
   id uuid primary key,
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -41,6 +52,7 @@ create table if not exists transactions (
   from_account_id uuid references accounts(id),
   to_account_id uuid references accounts(id),
   category_id uuid references categories(id),
+  merchant_id uuid references merchants(id), -- expenses only: which establishment
   note text,
   is_reimbursement boolean not null default false,
   reimbursement_id uuid, -- FK added below, after reimbursements exists
@@ -105,6 +117,8 @@ create table if not exists user_settings (
   currency text not null default 'PHP',
   safety_net_auto_months numeric not null default 1.0,
   safety_net_override_amount bigint, -- centavos; null = use auto calculation
+  allowance_amount bigint, -- centavos; null = no allowance pacing configured
+  allowance_period text not null default 'weekly' check (allowance_period in ('weekly', 'monthly')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -112,6 +126,7 @@ create table if not exists user_settings (
 -- Indexes for the sync watermark pull (per-user, changed-since queries)
 create index if not exists idx_accounts_user_updated on accounts(user_id, updated_at);
 create index if not exists idx_categories_user_updated on categories(user_id, updated_at);
+create index if not exists idx_merchants_user_updated on merchants(user_id, updated_at);
 create index if not exists idx_transactions_user_updated on transactions(user_id, updated_at);
 create index if not exists idx_reimbursements_user_updated on reimbursements(user_id, updated_at);
 create index if not exists idx_goals_user_updated on savings_goals(user_id, updated_at);
@@ -120,6 +135,7 @@ create index if not exists idx_contributions_user_updated on goal_contributions(
 -- Row Level Security: every row is only visible/writable by its owner
 alter table accounts enable row level security;
 alter table categories enable row level security;
+alter table merchants enable row level security;
 alter table transactions enable row level security;
 alter table reimbursements enable row level security;
 alter table savings_goals enable row level security;
@@ -130,7 +146,7 @@ do $$
 declare
   t text;
 begin
-  foreach t in array array['accounts','categories','transactions','reimbursements','savings_goals','goal_contributions','user_settings']
+  foreach t in array array['accounts','categories','merchants','transactions','reimbursements','savings_goals','goal_contributions','user_settings']
   loop
     execute format('create policy "%1$s_owner_select" on %1$s for select using (auth.uid() = user_id)', t);
     execute format('create policy "%1$s_owner_insert" on %1$s for insert with check (auth.uid() = user_id)', t);

@@ -3,6 +3,7 @@ import type {
   LocalAccount,
   LocalCategory,
   LocalGoalContribution,
+  LocalMerchant,
   LocalReimbursement,
   LocalSavingsGoal,
   LocalTransaction,
@@ -17,6 +18,7 @@ export interface SyncMeta {
 class AppDatabase extends Dexie {
   accounts!: EntityTable<LocalAccount, 'id'>
   categories!: EntityTable<LocalCategory, 'id'>
+  merchants!: EntityTable<LocalMerchant, 'id'>
   transactions!: EntityTable<LocalTransaction, 'id'>
   reimbursements!: EntityTable<LocalReimbursement, 'id'>
   savings_goals!: EntityTable<LocalSavingsGoal, 'id'>
@@ -36,6 +38,10 @@ class AppDatabase extends Dexie {
       user_settings: 'id, user_id, updated_at, _dirty',
       sync_meta: 'key',
     })
+    this.version(2).stores({
+      merchants: 'id, user_id, archived_at, updated_at, _dirty',
+      transactions: 'id, user_id, type, occurred_at, from_account_id, to_account_id, category_id, merchant_id, reimbursement_id, updated_at, _dirty',
+    })
   }
 }
 
@@ -44,6 +50,7 @@ export const db = new AppDatabase()
 export const SYNCABLE_TABLES = [
   'accounts',
   'categories',
+  'merchants',
   'transactions',
   'reimbursements',
   'savings_goals',

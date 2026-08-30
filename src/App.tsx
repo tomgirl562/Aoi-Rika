@@ -7,6 +7,7 @@ import { WeeklyCheckIn } from './pages/WeeklyCheckIn'
 import { TransactionsPage } from './pages/TransactionsPage'
 import { ReimbursementsPage } from './pages/ReimbursementsPage'
 import { GoalsPage } from './pages/GoalsPage'
+import { PlacesPage } from './pages/PlacesPage'
 import { SettingsPage } from './pages/SettingsPage'
 
 function Shell() {
@@ -33,6 +34,7 @@ function Shell() {
           <Route path="/transactions" element={<TransactionsPage />} />
           <Route path="/reimbursements" element={<ReimbursementsPage />} />
           <Route path="/goals" element={<GoalsPage />} />
+          <Route path="/places" element={<PlacesPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

@@ -1,14 +1,14 @@
 @import 'tailwindcss';
 
 :root {
-  --bg: #f4f6f5;
+  --bg: #fdf1f6;
   --surface: #ffffff;
-  --surface-2: #eef2f0;
-  --text: #163229;
-  --text-muted: #5a6b64;
-  --border: #dde4e1;
-  --accent: #146c5c;
-  --accent-soft: #e3f1ec;
+  --surface-2: #fbe3ee;
+  --text: #3d1f2e;
+  --text-muted: #8a5570;
+  --border: #f4d3e3;
+  --accent: #d6336c;
+  --accent-soft: #fbdbe9;
 
   /* Status palette - fixed, never themed (per dataviz skill): same hex in light and dark. */
   --good: #0ca30c;
@@ -29,14 +29,14 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0d1c17;
-    --surface: #142e26;
-    --surface-2: #1a382e;
-    --text: #eaf3ef;
-    --text-muted: #9db2ab;
-    --border: #24473c;
-    --accent: #4fd8b6;
-    --accent-soft: #163f34;
+    --bg: #22121a;
+    --surface: #34192a;
+    --surface-2: #3f2033;
+    --text: #fbe8f1;
+    --text-muted: #cf94b1;
+    --border: #522b42;
+    --accent: #f472b6;
+    --accent-soft: #4a2438;
 
     --series-1: #3987e5;
     --series-2: #d95926;

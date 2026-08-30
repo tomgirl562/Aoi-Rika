@@ -88,6 +88,7 @@ export function GoalsPage() {
       from_account_id: contributeFrom,
       to_account_id: goal.account_id,
       category_id: null,
+      merchant_id: null,
       note: `Toward ${goal.name}`,
       is_reimbursement: false,
       reimbursement_id: null,

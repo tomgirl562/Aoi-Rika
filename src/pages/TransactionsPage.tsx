@@ -1,21 +1,24 @@
 import { useMemo, useState } from 'react'
 import { PageHeader } from '../components/PageHeader'
-import { useAccounts, useCategories, useGoals, useTransactions } from '../hooks/useData'
+import { useAccounts, useCategories, useGoals, useMerchants, useTransactions } from '../hooks/useData'
 import { useAuth } from '../lib/auth'
 import { createRecord, softDeleteRecord } from '../lib/mutate'
 import { formatMoney, pesosToCentavos } from '../lib/money'
-import type { GoalContribution, Transaction, TransactionType } from '../lib/types'
+import type { GoalContribution, Merchant, Transaction, TransactionType } from '../lib/types'
 
 interface GoalAllocation {
   goalId: string
   amountPesos: string
 }
 
+const MERCHANT_TYPE_SUGGESTIONS = ['Restaurant', 'Grocery', 'Online Shop', 'Subscription', 'Grab Food', 'Other']
+
 export function TransactionsPage() {
   const { userId } = useAuth()
   const accounts = useAccounts()
   const categories = useCategories().filter((c) => !c.archived_at)
   const goals = useGoals().filter((g) => g.status === 'active')
+  const merchants = useMerchants()
   const transactions = useTransactions()
 
   const [type, setType] = useState<TransactionType>('expense')
@@ -23,10 +26,16 @@ export function TransactionsPage() {
   const [fromAccountId, setFromAccountId] = useState('')
   const [toAccountId, setToAccountId] = useState('')
   const [categoryId, setCategoryId] = useState('')
+  const [merchantName, setMerchantName] = useState('')
+  const [merchantType, setMerchantType] = useState('')
   const [note, setNote] = useState('')
   const [occurredAt, setOccurredAt] = useState(() => new Date().toISOString().slice(0, 16))
   const [allocations, setAllocations] = useState<GoalAllocation[]>([])
   const [error, setError] = useState<string | null>(null)
+
+  const trimmedMerchantName = merchantName.trim()
+  const existingMerchant = merchants.find((m) => m.name.trim().toLowerCase() === trimmedMerchantName.toLowerCase())
+  const isNewMerchant = trimmedMerchantName !== '' && !existingMerchant
 
   const sortedTransactions = useMemo(
     () => [...transactions].sort((a, b) => b.occurred_at.localeCompare(a.occurred_at)).slice(0, 40),
@@ -35,6 +44,7 @@ export function TransactionsPage() {
 
   const accountName = (id: string | null) => accounts.find((a) => a.id === id)?.name ?? '—'
   const categoryName = (id: string | null) => categories.find((c) => c.id === id)?.name ?? '—'
+  const merchantLabel = (id: string | null) => merchants.find((m) => m.id === id)?.name ?? null
 
   const toAccountIsSavings = accounts.find((a) => a.id === toAccountId)?.kind === 'savings'
   const goalsForToAccount = goals.filter((g) => g.account_id === toAccountId)
@@ -43,6 +53,8 @@ export function TransactionsPage() {
     setAmount('')
     setNote('')
     setCategoryId('')
+    setMerchantName('')
+    setMerchantType('')
     setAllocations([])
   }
 
@@ -81,6 +93,17 @@ export function TransactionsPage() {
       }
     }
 
+    let merchantId: string | null = null
+    if (type === 'expense' && trimmedMerchantName) {
+      merchantId = existingMerchant
+        ? existingMerchant.id
+        : await createRecord<Merchant>('merchants', userId!, {
+            name: trimmedMerchantName,
+            type: merchantType || 'Other',
+            archived_at: null,
+          })
+    }
+
     const txId = await createRecord<Transaction>('transactions', userId!, {
       type,
       amount: amountCentavos,
@@ -88,6 +111,7 @@ export function TransactionsPage() {
       from_account_id: type === 'income' ? null : fromAccountId,
       to_account_id: type === 'expense' ? null : toAccountId,
       category_id: type === 'expense' ? categoryId : null,
+      merchant_id: merchantId,
       note: note.trim() || null,
       is_reimbursement: false,
       reimbursement_id: null,
@@ -172,6 +196,46 @@ export function TransactionsPage() {
           </div>
         )}
 
+        {type === 'expense' && (
+          <div>
+            <label className="label">Where? (optional)</label>
+            <input
+              className="input"
+              list="merchant-options"
+              value={merchantName}
+              onChange={(e) => setMerchantName(e.target.value)}
+              placeholder="e.g. Jollibee, Landmark Grocery"
+            />
+            <datalist id="merchant-options">
+              {merchants.map((m) => (
+                <option key={m.id} value={m.name} />
+              ))}
+            </datalist>
+            {existingMerchant && (
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0.3rem 0 0' }}>
+                Tagged as <span className="pill">{existingMerchant.type}</span>
+              </p>
+            )}
+            {isNewMerchant && (
+              <div style={{ marginTop: '0.5rem' }}>
+                <label className="label">What kind of place is this?</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                  {MERCHANT_TYPE_SUGGESTIONS.map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      className={`btn ${merchantType === t ? 'btn-primary' : 'btn-secondary'}`}
+                      onClick={() => setMerchantType(t)}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {type === 'transfer' && toAccountIsSavings && goalsForToAccount.length > 0 && (
           <div>
             <label className="label">Put toward a goal (optional, can split)</label>
@@ -243,6 +307,11 @@ export function TransactionsPage() {
                 {tx.type === 'expense' && `${accountName(tx.from_account_id)} → ${categoryName(tx.category_id)}`}
                 {tx.type === 'income' && `${accountName(tx.to_account_id)} ← income`}
                 {tx.type === 'transfer' && `${accountName(tx.from_account_id)} → ${accountName(tx.to_account_id)}`}
+                {merchantLabel(tx.merchant_id) && (
+                  <span className="pill" style={{ marginLeft: '0.4rem' }}>
+                    {merchantLabel(tx.merchant_id)}
+                  </span>
+                )}
                 {tx.is_reimbursement && <span className="pill" style={{ marginLeft: '0.4rem' }}>reimbursement</span>}
               </div>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>

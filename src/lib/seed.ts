@@ -4,7 +4,7 @@ import type { Account, Category, UserSettings } from './types'
 
 const DEFAULT_ACCOUNTS: Array<Pick<Account, 'name' | 'kind' | 'starting_balance' | 'archived_at'>> = [
   { name: 'Payroll', kind: 'income', starting_balance: 0, archived_at: null },
-  { name: 'Daily Savings / Expenses', kind: 'spending', starting_balance: 0, archived_at: null },
+  { name: 'Daily Essentials', kind: 'spending', starting_balance: 0, archived_at: null },
   { name: 'Personal Savings', kind: 'savings', starting_balance: 0, archived_at: null },
 ]
 
@@ -46,6 +46,8 @@ export async function seedDefaultsIfNeeded(userId: string) {
         currency: 'PHP',
         safety_net_auto_months: 1.0,
         safety_net_override_amount: null,
+        allowance_amount: null,
+        allowance_period: 'weekly',
       })
     }
   })

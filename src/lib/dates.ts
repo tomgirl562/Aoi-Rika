@@ -38,4 +38,13 @@ export function currentMonthRange(reference: Date): WeekRange {
   return { start, end }
 }
 
+export function daysInMonth(reference: Date): number {
+  return new Date(reference.getFullYear(), reference.getMonth() + 1, 0).getDate()
+}
+
+/** 1-indexed day of month, i.e. the 1st is day 1. */
+export function dayOfMonth(reference: Date): number {
+  return reference.getDate()
+}
+
 export { endOfWeek }
