@@ -2,8 +2,8 @@ import { useState } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { useAccounts, useCategories, useSettings, useTransactions } from '../hooks/useData'
 import { useAuth } from '../lib/auth'
-import { allAccountBalances } from '../lib/calc/balances'
-import { computeCreditCardStatus } from '../lib/calc/credit'
+import { accountBalance, allAccountBalances } from '../lib/calc/balances'
+import { computeCreditCardStatus, creditOwed } from '../lib/calc/credit'
 import { createRecord, updateRecord } from '../lib/mutate'
 import { formatMoney, pesosToCentavos } from '../lib/money'
 import type { Account, AccountKind, Category, UserSettings } from '../lib/types'
@@ -66,13 +66,26 @@ export function SettingsPage() {
 
   async function saveEditAccount(account: Account) {
     if (!editName.trim()) return
+
+    let startingBalancePatch = {}
+    if (editBalance.trim()) {
+      // The field means "here's the correct current amount" (a balance or, for credit, what's
+      // owed) - not "here's a new starting_balance to add on top of transactions already logged
+      // against this account." So back out whatever the existing transactions already
+      // contributed, under whichever formula the (possibly just-changed) kind uses, and set
+      // starting_balance so the result lands exactly on the value the user typed.
+      const desired = pesosToCentavos(Number(editBalance))
+      const currentComputed =
+        editKind === 'credit' ? creditOwed(account, transactions) : accountBalance(account, transactions)
+      const transactionDelta = currentComputed - account.starting_balance
+      startingBalancePatch = { starting_balance: desired - transactionDelta }
+    }
+
     await updateRecord<Account>('accounts', account.id, {
       name: editName.trim(),
       institution: editInstitution.trim() || null,
       kind: editKind,
-      // Balance here is the account's starting balance (before any logged transactions), so
-      // leaving it blank keeps whatever was set before instead of silently zeroing it out.
-      ...(editBalance.trim() ? { starting_balance: pesosToCentavos(Number(editBalance)) } : {}),
+      ...startingBalancePatch,
       credit_limit: editKind === 'credit' && editLimit.trim() ? pesosToCentavos(Number(editLimit)) : null,
       statement_due_day: editKind === 'credit' && editDueDay.trim() ? Number(editDueDay) : null,
     })

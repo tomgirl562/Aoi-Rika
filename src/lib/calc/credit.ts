@@ -39,18 +39,39 @@ export function previousStatementDueDate(dueDay: number, reference: Date): Date 
   return clampToMonth(next.getFullYear(), next.getMonth() - 1, dueDay)
 }
 
+export interface CreditCycleActivity {
+  cycleStart: Date | null // null when no statement due day is set - charges/payments are then all-time
+  charges: Transaction[] // most recent first
+  payments: Transaction[] // most recent first
+  totalCharged: number
+  totalPaid: number
+}
+
+/** This billing cycle's charges and payments for a card (or all-time, if no due day is set yet). */
+export function creditCycleActivity(account: Account, transactions: Transaction[], reference: Date): CreditCycleActivity {
+  const cycleStart = account.statement_due_day ? previousStatementDueDate(account.statement_due_day, reference) : null
+
+  const inCycle = (tx: Transaction) => !cycleStart || new Date(tx.occurred_at) >= cycleStart
+  const charges = transactions
+    .filter((tx) => !tx.deleted_at && tx.from_account_id === account.id && inCycle(tx))
+    .sort((a, b) => b.occurred_at.localeCompare(a.occurred_at))
+  const payments = transactions
+    .filter((tx) => !tx.deleted_at && tx.to_account_id === account.id && inCycle(tx))
+    .sort((a, b) => b.occurred_at.localeCompare(a.occurred_at))
+
+  return {
+    cycleStart,
+    charges,
+    payments,
+    totalCharged: charges.reduce((sum, tx) => sum + tx.amount, 0),
+    totalPaid: payments.reduce((sum, tx) => sum + tx.amount, 0),
+  }
+}
+
 /** Total charged to the card since the start of the current billing cycle (null if no due day is set). */
 export function chargesSinceLastStatement(account: Account, transactions: Transaction[], reference: Date): number | null {
   if (!account.statement_due_day) return null
-  const cycleStart = previousStatementDueDate(account.statement_due_day, reference)
-  let total = 0
-  for (const tx of transactions) {
-    if (tx.deleted_at) continue
-    if (tx.from_account_id !== account.id) continue
-    if (new Date(tx.occurred_at) < cycleStart) continue
-    total += tx.amount
-  }
-  return total
+  return creditCycleActivity(account, transactions, reference).totalCharged
 }
 
 export interface CreditPayoffPlan {

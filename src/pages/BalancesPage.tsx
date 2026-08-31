@@ -2,12 +2,15 @@ import { differenceInCalendarMonths, differenceInCalendarWeeks } from 'date-fns'
 import { useMemo, useState } from 'react'
 import { BarChart, type BarChartItem } from '../components/BarChart'
 import { PageHeader } from '../components/PageHeader'
-import { useAccounts, useReimbursements, useSettings, useTransactions } from '../hooks/useData'
+import { useAccounts, useCategories, useMerchants, useReimbursements, useSettings, useTransactions } from '../hooks/useData'
+import { useAuth } from '../lib/auth'
 import { accountBalance, allAccountBalances } from '../lib/calc/balances'
-import { chargesSinceLastStatement, computeCreditCardStatus, computeCreditPayoffPlan } from '../lib/calc/credit'
+import { computeCreditCardStatus, computeCreditPayoffPlan, creditCycleActivity } from '../lib/calc/credit'
+import { createRecord } from '../lib/mutate'
 import { outstandingTotals } from '../lib/calc/reimbursements'
 import { computeSafeToSpend, resolveSafetyNet, trailingAverageMonthlyExpense, trailingAverageWeeklyNet } from '../lib/calc/weekly'
 import { formatMoney, pesosToCentavos } from '../lib/money'
+import type { Transaction } from '../lib/types'
 
 const SERIES_VARS = [
   '--series-1',
@@ -27,9 +30,12 @@ const MILESTONES = [
 ]
 
 export function BalancesPage() {
+  const { userId } = useAuth()
   const allAccounts = useAccounts().filter((a) => !a.archived_at)
   const accounts = allAccounts.filter((a) => a.kind !== 'credit')
   const creditCards = allAccounts.filter((a) => a.kind === 'credit')
+  const categories = useCategories()
+  const merchants = useMerchants()
   const transactions = useTransactions()
   const reimbursements = useReimbursements()
   const settings = useSettings()
@@ -38,6 +44,32 @@ export function BalancesPage() {
   const [whatIfPeriod, setWhatIfPeriod] = useState<'weekly' | 'monthly'>('weekly')
   const [whatIfDate, setWhatIfDate] = useState('')
   const [payoffDateByCard, setPayoffDateByCard] = useState<Record<string, string>>({})
+  const [paymentAmountByCard, setPaymentAmountByCard] = useState<Record<string, string>>({})
+  const [paymentFromByCard, setPaymentFromByCard] = useState<Record<string, string>>({})
+
+  const categoryName = (id: string | null) => categories.find((c) => c.id === id)?.name ?? null
+  const merchantName = (id: string | null) => merchants.find((m) => m.id === id)?.name ?? null
+  const chargeLabel = (tx: Transaction) => merchantName(tx.merchant_id) ?? categoryName(tx.category_id) ?? 'Charge'
+
+  async function logPayment(card: { id: string }) {
+    const pesos = Number(paymentAmountByCard[card.id])
+    const fromAccountId = paymentFromByCard[card.id]
+    if (!pesos || pesos <= 0 || !fromAccountId || !userId) return
+    await createRecord<Transaction>('transactions', userId, {
+      type: 'transfer',
+      amount: pesosToCentavos(pesos),
+      occurred_at: new Date().toISOString(),
+      from_account_id: fromAccountId,
+      to_account_id: card.id,
+      category_id: null,
+      merchant_id: null,
+      note: 'Credit card payment',
+      is_reimbursement: false,
+      reimbursement_id: null,
+    })
+    setPaymentAmountByCard({ ...paymentAmountByCard, [card.id]: '' })
+    setPaymentFromByCard({ ...paymentFromByCard, [card.id]: '' })
+  }
 
   const now = new Date()
   const weekStartDay = settings?.week_start_day ?? 1
@@ -168,7 +200,7 @@ export function BalancesPage() {
           <h2 style={{ fontSize: '0.95rem', marginTop: 0 }}>Credit cards</h2>
           {creditCards.map((card) => {
             const status = computeCreditCardStatus(card, transactions, now)
-            const cycleCharges = chargesSinceLastStatement(card, transactions, now)
+            const activity = creditCycleActivity(card, transactions, now)
             const payoffDate = payoffDateByCard[card.id]
             const payoffTarget = payoffDate ? new Date(`${payoffDate}T00:00:00`) : null
             const payoffPlan = payoffTarget ? computeCreditPayoffPlan(status.owed, payoffTarget, now) : null
@@ -198,11 +230,6 @@ export function BalancesPage() {
                     </div>
                   </>
                 )}
-                {cycleCharges != null && (
-                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                    {formatMoney(cycleCharges)} charged this billing cycle
-                  </div>
-                )}
                 {status.daysUntilDue != null && (
                   <div style={{ fontSize: '0.78rem', color: status.daysUntilDue <= 3 ? 'var(--over)' : 'var(--text-muted)' }}>
                     {status.daysUntilDue <= 0
@@ -210,6 +237,72 @@ export function BalancesPage() {
                       : `Due in ${status.daysUntilDue} day${status.daysUntilDue === 1 ? '' : 's'} (${status.nextDueDate!.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`}
                   </div>
                 )}
+
+                <div style={{ marginTop: '0.6rem', paddingTop: '0.6rem', borderTop: '1px solid var(--border)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: '0.3rem' }}>
+                    <span style={{ fontWeight: 600 }}>
+                      {activity.cycleStart ? 'This billing cycle' : 'Charged so far'}
+                    </span>
+                    <span style={{ color: 'var(--over)' }}>{formatMoney(activity.totalCharged)}</span>
+                  </div>
+                  {activity.charges.length === 0 ? (
+                    <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: 0 }}>Nothing charged yet.</p>
+                  ) : (
+                    activity.charges.map((tx) => (
+                      <div key={tx.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', padding: '0.15rem 0' }}>
+                        <span style={{ color: 'var(--text-muted)' }}>
+                          {new Date(tx.occurred_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · {chargeLabel(tx)}
+                        </span>
+                        <span>{formatMoney(tx.amount)}</span>
+                      </div>
+                    ))
+                  )}
+
+                  {activity.payments.length > 0 && (
+                    <>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', margin: '0.5rem 0 0.3rem' }}>
+                        <span style={{ fontWeight: 600 }}>Paid {activity.cycleStart ? 'this cycle' : 'so far'}</span>
+                        <span style={{ color: 'var(--good)' }}>{formatMoney(activity.totalPaid)}</span>
+                      </div>
+                      {activity.payments.map((tx) => (
+                        <div key={tx.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', padding: '0.15rem 0' }}>
+                          <span style={{ color: 'var(--text-muted)' }}>
+                            {new Date(tx.occurred_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                          </span>
+                          <span>{formatMoney(tx.amount)}</span>
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </div>
+
+                <div style={{ marginTop: '0.6rem', paddingTop: '0.6rem', borderTop: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.3rem' }}>Log a payment</div>
+                  <div style={{ display: 'flex', gap: '0.4rem' }}>
+                    <input
+                      className="input"
+                      type="number"
+                      placeholder="₱ paid"
+                      value={paymentAmountByCard[card.id] ?? ''}
+                      onChange={(e) => setPaymentAmountByCard({ ...paymentAmountByCard, [card.id]: e.target.value })}
+                    />
+                    <select
+                      className="input"
+                      value={paymentFromByCard[card.id] ?? ''}
+                      onChange={(e) => setPaymentFromByCard({ ...paymentFromByCard, [card.id]: e.target.value })}
+                    >
+                      <option value="">From which account?</option>
+                      {accounts.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button className="btn btn-primary" onClick={() => logPayment(card)}>
+                      Log
+                    </button>
+                  </div>
+                </div>
 
                 <div style={{ marginTop: '0.6rem', paddingTop: '0.6rem', borderTop: '1px solid var(--border)' }}>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.3rem' }}>
