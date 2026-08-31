@@ -5,12 +5,18 @@ import { PageHeader } from '../components/PageHeader'
 import { useAccounts, useCategories, useMerchants, useReimbursements, useSettings, useTransactions } from '../hooks/useData'
 import { useAuth } from '../lib/auth'
 import { accountBalance, allAccountBalances } from '../lib/calc/balances'
-import { computeCreditCardStatus, computeCreditPayoffPlan, creditCycleActivity } from '../lib/calc/credit'
-import { createRecord } from '../lib/mutate'
+import {
+  computeCreditCardStatus,
+  computeCreditPayoffPlan,
+  correctedStartingBalanceForOwed,
+  creditAllTimeActivity,
+  creditCycleActivity,
+} from '../lib/calc/credit'
+import { createRecord, softDeleteRecord, updateRecord } from '../lib/mutate'
 import { outstandingTotals } from '../lib/calc/reimbursements'
 import { computeSafeToSpend, resolveSafetyNet, trailingAverageMonthlyExpense, trailingAverageWeeklyNet } from '../lib/calc/weekly'
 import { formatMoney, pesosToCentavos } from '../lib/money'
-import type { Transaction } from '../lib/types'
+import type { Account, Transaction } from '../lib/types'
 
 const SERIES_VARS = [
   '--series-1',
@@ -40,6 +46,7 @@ export function BalancesPage() {
   const reimbursements = useReimbursements()
   const settings = useSettings()
 
+  const [view, setView] = useState<'money' | 'credit'>('money')
   const [whatIfAmount, setWhatIfAmount] = useState('')
   const [whatIfPeriod, setWhatIfPeriod] = useState<'weekly' | 'monthly'>('weekly')
   const [whatIfDate, setWhatIfDate] = useState('')
@@ -47,10 +54,14 @@ export function BalancesPage() {
   const [paymentAmountByCard, setPaymentAmountByCard] = useState<Record<string, string>>({})
   const [paymentFromByCard, setPaymentFromByCard] = useState<Record<string, string>>({})
   const [paymentDateByCard, setPaymentDateByCard] = useState<Record<string, string>>({})
+  const [correctingCardId, setCorrectingCardId] = useState<string | null>(null)
+  const [correctionByCard, setCorrectionByCard] = useState<Record<string, string>>({})
+  const [historyExpandedByCard, setHistoryExpandedByCard] = useState<Record<string, boolean>>({})
 
   const categoryName = (id: string | null) => categories.find((c) => c.id === id)?.name ?? null
   const merchantName = (id: string | null) => merchants.find((m) => m.id === id)?.name ?? null
   const chargeLabel = (tx: Transaction) => merchantName(tx.merchant_id) ?? categoryName(tx.category_id) ?? 'Charge'
+  const fromAccountName = (id: string | null) => allAccounts.find((a) => a.id === id)?.name ?? 'an account'
 
   async function logPayment(card: { id: string }) {
     const pesos = Number(paymentAmountByCard[card.id])
@@ -72,6 +83,20 @@ export function BalancesPage() {
     setPaymentAmountByCard({ ...paymentAmountByCard, [card.id]: '' })
     setPaymentFromByCard({ ...paymentFromByCard, [card.id]: '' })
     setPaymentDateByCard({ ...paymentDateByCard, [card.id]: '' })
+  }
+
+  function startCorrection(card: Account, currentOwed: number) {
+    setCorrectingCardId(card.id)
+    setCorrectionByCard({ ...correctionByCard, [card.id]: (currentOwed / 100).toString() })
+  }
+
+  async function applyCorrection(card: Account) {
+    const input = correctionByCard[card.id]
+    if (input === undefined || input.trim() === '') return
+    const desiredOwed = pesosToCentavos(Number(input))
+    const newStartingBalance = correctedStartingBalanceForOwed(card, transactions, desiredOwed)
+    await updateRecord<Account>('accounts', card.id, { starting_balance: newStartingBalance })
+    setCorrectingCardId(null)
   }
 
   const now = new Date()
@@ -153,290 +178,418 @@ export function BalancesPage() {
     : 0
   const whatIfProjected = total + pesosToCentavos(Number(whatIfAmount) || 0) * whatIfPeriodsUntil
 
+  const activeView = creditCards.length > 0 ? view : 'money'
+
   return (
     <div>
       <PageHeader title="Balances" subtitle="Every account you hold money in, and what it adds up to." />
 
-      <div className="card" style={{ textAlign: 'center', marginBottom: '1.25rem' }}>
-        <div className="stat-label">Total money you currently hold</div>
-        <div style={{ fontSize: '2.2rem', fontWeight: 800, margin: '0.25rem 0', color: 'var(--accent)' }}>
-          {formatMoney(total)}
-        </div>
-        <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-          Across {accounts.length} account{accounts.length === 1 ? '' : 's'}
-        </div>
-      </div>
-
-      {(reimbTotals.owedToMe > 0 || reimbTotals.iOwe > 0) && (
-        <section className="card" style={{ marginBottom: '1rem' }}>
-          <h2 style={{ fontSize: '0.95rem', marginTop: 0 }}>If everything settled today</h2>
-          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.2rem 0', fontSize: '0.85rem' }}>
-            <span>Current total</span>
-            <span>{formatMoney(total)}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.2rem 0', fontSize: '0.85rem' }}>
-            <span>+ Owed to you</span>
-            <span style={{ color: 'var(--good)' }}>{formatMoney(reimbTotals.owedToMe)}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.2rem 0', fontSize: '0.85rem' }}>
-            <span>− You owe</span>
-            <span style={{ color: 'var(--over)' }}>{formatMoney(reimbTotals.iOwe)}</span>
-          </div>
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              padding: '0.4rem 0 0',
-              marginTop: '0.3rem',
-              borderTop: '1px solid var(--border)',
-              fontWeight: 700,
-            }}
+      {creditCards.length > 0 && (
+        <div className="tab-row" style={{ display: 'flex', gap: '0.4rem', marginBottom: '1.25rem' }}>
+          <button
+            className={activeView === 'money' ? 'btn btn-primary' : 'btn btn-secondary'}
+            style={{ flex: 1 }}
+            onClick={() => setView('money')}
           >
-            <span>Projected total</span>
-            <span>{formatMoney(projectedTotal)}</span>
-          </div>
-        </section>
+            My money
+          </button>
+          <button
+            className={activeView === 'credit' ? 'btn btn-primary' : 'btn btn-secondary'}
+            style={{ flex: 1 }}
+            onClick={() => setView('credit')}
+          >
+            Credit cards
+          </button>
+        </div>
       )}
 
-      {creditCards.length > 0 && (
-        <section className="card" style={{ marginBottom: '1rem' }}>
-          <h2 style={{ fontSize: '0.95rem', marginTop: 0 }}>Credit cards</h2>
-          {creditCards.map((card) => {
-            const status = computeCreditCardStatus(card, transactions, now)
-            const activity = creditCycleActivity(card, transactions, now)
-            const payoffDate = payoffDateByCard[card.id]
-            const payoffTarget = payoffDate ? new Date(`${payoffDate}T00:00:00`) : null
-            const payoffPlan = payoffTarget ? computeCreditPayoffPlan(status.owed, payoffTarget, now) : null
-            const payoffFitsSafely = payoffPlan ? payoffPlan.requiredWeeklyPayment <= safeToSpend : null
-            return (
-              <div key={card.id} style={{ marginBottom: '1rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ fontWeight: 600 }}>
-                    {card.institution && <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>{card.institution} · </span>}
-                    {card.name}
-                  </span>
-                  <span style={{ fontWeight: 700 }}>{formatMoney(status.owed)} owed</span>
-                </div>
-                {card.credit_limit != null && (
-                  <>
-                    <div className="progress-track" style={{ margin: '0.4rem 0' }}>
-                      <div
-                        className="progress-fill"
-                        style={{
-                          width: `${Math.min(100, Math.round((status.owed / card.credit_limit) * 100))}%`,
-                          background: status.owed > card.credit_limit ? 'var(--over)' : 'var(--accent)',
-                        }}
-                      />
-                    </div>
-                    <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                      {formatMoney(status.available)} available of {formatMoney(card.credit_limit)} limit
-                    </div>
-                  </>
-                )}
-                {status.daysUntilDue != null && (
-                  <div style={{ fontSize: '0.78rem', color: status.daysUntilDue <= 3 ? 'var(--over)' : 'var(--text-muted)' }}>
-                    {status.daysUntilDue <= 0
-                      ? `Due today (${status.nextDueDate!.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`
-                      : `Due in ${status.daysUntilDue} day${status.daysUntilDue === 1 ? '' : 's'} (${status.nextDueDate!.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`}
-                  </div>
-                )}
+      {activeView === 'money' && (
+        <>
+          <div className="card" style={{ textAlign: 'center', marginBottom: '1.25rem' }}>
+            <div className="stat-label">Total money you currently hold</div>
+            <div style={{ fontSize: '2.2rem', fontWeight: 800, margin: '0.25rem 0', color: 'var(--accent)' }}>
+              {formatMoney(total)}
+            </div>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+              Across {accounts.length} account{accounts.length === 1 ? '' : 's'}
+              {creditCards.length > 0 && ' · not counting your credit cards - that money isn\'t yours'}
+            </div>
+          </div>
 
-                <div style={{ marginTop: '0.6rem', paddingTop: '0.6rem', borderTop: '1px solid var(--border)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: '0.3rem' }}>
-                    <span style={{ fontWeight: 600 }}>
-                      {activity.cycleStart ? 'This billing cycle' : 'Charged so far'}
-                    </span>
-                    <span style={{ color: 'var(--over)' }}>{formatMoney(activity.totalCharged)}</span>
+          {(reimbTotals.owedToMe > 0 || reimbTotals.iOwe > 0) && (
+            <section className="card" style={{ marginBottom: '1rem' }}>
+              <h2 style={{ fontSize: '0.95rem', marginTop: 0 }}>If everything settled today</h2>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.2rem 0', fontSize: '0.85rem' }}>
+                <span>Current total</span>
+                <span>{formatMoney(total)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.2rem 0', fontSize: '0.85rem' }}>
+                <span>+ Owed to you</span>
+                <span style={{ color: 'var(--good)' }}>{formatMoney(reimbTotals.owedToMe)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.2rem 0', fontSize: '0.85rem' }}>
+                <span>− You owe</span>
+                <span style={{ color: 'var(--over)' }}>{formatMoney(reimbTotals.iOwe)}</span>
+              </div>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  padding: '0.4rem 0 0',
+                  marginTop: '0.3rem',
+                  borderTop: '1px solid var(--border)',
+                  fontWeight: 700,
+                }}
+              >
+                <span>Projected total</span>
+                <span>{formatMoney(projectedTotal)}</span>
+              </div>
+            </section>
+          )}
+
+          <section className="card" style={{ marginBottom: '1rem' }}>
+            <h2 style={{ fontSize: '0.95rem', marginTop: 0 }}>By account</h2>
+            {byAccount.length > 0 ? (
+              <BarChart items={byAccount} formatValue={formatMoney} />
+            ) : (
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>No accounts yet.</p>
+            )}
+          </section>
+
+          {byInstitution.length > 1 && (
+            <section className="card" style={{ marginBottom: '1rem' }}>
+              <h2 style={{ fontSize: '0.95rem', marginTop: 0 }}>By institution</h2>
+              <BarChart items={byInstitution} formatValue={formatMoney} />
+            </section>
+          )}
+
+          {byKind.length > 1 && (
+            <section className="card" style={{ marginBottom: '1rem' }}>
+              <h2 style={{ fontSize: '0.95rem', marginTop: 0 }}>By type</h2>
+              <BarChart items={byKind} formatValue={formatMoney} />
+            </section>
+          )}
+
+          <section className="card" style={{ marginBottom: '1rem' }}>
+            <h2 style={{ fontSize: '0.95rem', marginTop: 0 }}>Savings projection</h2>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: 0 }}>
+              At your actual pace lately ({formatMoney(weeklyNetRate)}/week net), here's where your total could be:
+            </p>
+            {MILESTONES.map((m) => (
+              <div key={m.label} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.2rem 0', fontSize: '0.85rem' }}>
+                <span>In {m.label}</span>
+                <span style={{ fontWeight: 600 }}>{formatMoney(total + weeklyNetRate * m.weeks)}</span>
+              </div>
+            ))}
+
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '1rem', marginBottom: '0.4rem' }}>
+              Or play with your own numbers:
+            </p>
+            <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.4rem' }}>
+              <input
+                className="input"
+                type="number"
+                placeholder="₱ amount"
+                value={whatIfAmount}
+                onChange={(e) => setWhatIfAmount(e.target.value)}
+              />
+              <select className="input" value={whatIfPeriod} onChange={(e) => setWhatIfPeriod(e.target.value as 'weekly' | 'monthly')}>
+                <option value="weekly">per week</option>
+                <option value="monthly">per month</option>
+              </select>
+            </div>
+            <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+              <span style={{ fontSize: '0.85rem' }}>by</span>
+              <input className="input" type="date" value={whatIfDate} onChange={(e) => setWhatIfDate(e.target.value)} />
+            </div>
+            {whatIfAmount && whatIfTargetDate && (
+              <p style={{ fontSize: '0.9rem', marginTop: '0.6rem', marginBottom: 0 }}>
+                By{' '}
+                {whatIfTargetDate.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}, you'd
+                have <strong>{formatMoney(whatIfProjected)}</strong>
+                <span style={{ color: 'var(--text-muted)' }}>
+                  {' '}
+                  ({whatIfPeriodsUntil} {whatIfPeriod === 'weekly' ? 'week' : 'month'}
+                  {whatIfPeriodsUntil === 1 ? '' : 's'} of {formatMoney(pesosToCentavos(Number(whatIfAmount) || 0))}/
+                  {whatIfPeriod === 'weekly' ? 'week' : 'month'})
+                </span>
+                .
+              </p>
+            )}
+          </section>
+
+          <h2 style={{ fontSize: '1rem' }}>All accounts</h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            {accounts.map((a) => (
+              <div key={a.id} className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontWeight: 600 }}>{a.name}</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                    {a.institution && <span className="pill" style={{ marginRight: '0.35rem' }}>{a.institution}</span>}
+                    <span className="pill">{a.kind}</span>
                   </div>
-                  {activity.charges.length === 0 ? (
-                    <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: 0 }}>Nothing charged yet.</p>
+                </div>
+                <div style={{ fontWeight: 700, fontSize: '1.05rem' }}>{formatMoney(balances.get(a.id) ?? 0)}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {activeView === 'credit' && creditCards.length > 0 && (
+        <>
+          <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 0, marginBottom: '1rem' }}>
+            This is money you owe, not money you have - it's kept separate from your savings, income, and cash on
+            hand above.
+          </p>
+          <section className="card" style={{ marginBottom: '1rem' }}>
+            {creditCards.map((card, idx) => {
+              const status = computeCreditCardStatus(card, transactions, now)
+              const activity = creditCycleActivity(card, transactions, now)
+              const allTime = creditAllTimeActivity(card, transactions)
+              const historyExpanded = historyExpandedByCard[card.id] ?? false
+              const payoffDate = payoffDateByCard[card.id]
+              const payoffTarget = payoffDate ? new Date(`${payoffDate}T00:00:00`) : null
+              const payoffPlan = payoffTarget ? computeCreditPayoffPlan(status.owed, payoffTarget, now) : null
+              const payoffFitsSafely = payoffPlan ? payoffPlan.requiredWeeklyPayment <= safeToSpend : null
+              return (
+                <div key={card.id} style={{ marginBottom: idx === creditCards.length - 1 ? 0 : '1.5rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                    <span style={{ fontWeight: 600 }}>
+                      {card.institution && <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>{card.institution} · </span>}
+                      {card.name}
+                    </span>
+                    <span style={{ fontWeight: 700 }}>{formatMoney(status.owed)} owed</span>
+                  </div>
+
+                  {correctingCardId === card.id ? (
+                    <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.4rem' }}>
+                      <input
+                        className="input"
+                        type="number"
+                        placeholder="Correct amount owed (₱)"
+                        value={correctionByCard[card.id] ?? ''}
+                        onChange={(e) => setCorrectionByCard({ ...correctionByCard, [card.id]: e.target.value })}
+                      />
+                      <button className="btn btn-primary" onClick={() => applyCorrection(card)}>
+                        Save
+                      </button>
+                      <button className="btn btn-secondary" onClick={() => setCorrectingCardId(null)}>
+                        Cancel
+                      </button>
+                    </div>
                   ) : (
-                    activity.charges.map((tx) => (
-                      <div key={tx.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', padding: '0.15rem 0' }}>
-                        <span style={{ color: 'var(--text-muted)' }}>
-                          {new Date(tx.occurred_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · {chargeLabel(tx)}
-                        </span>
-                        <span>{formatMoney(tx.amount)}</span>
-                      </div>
-                    ))
+                    <button
+                      className="btn btn-secondary"
+                      style={{ marginTop: '0.4rem', fontSize: '0.78rem' }}
+                      onClick={() => startCorrection(card, status.owed)}
+                    >
+                      Fix this number
+                    </button>
                   )}
 
-                  {activity.payments.length > 0 && (
+                  {card.credit_limit != null && (
                     <>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', margin: '0.5rem 0 0.3rem' }}>
-                        <span style={{ fontWeight: 600 }}>Paid {activity.cycleStart ? 'this cycle' : 'so far'}</span>
-                        <span style={{ color: 'var(--good)' }}>{formatMoney(activity.totalPaid)}</span>
+                      <div className="progress-track" style={{ margin: '0.6rem 0 0.4rem' }}>
+                        <div
+                          className="progress-fill"
+                          style={{
+                            width: `${Math.min(100, Math.max(0, Math.round((status.owed / card.credit_limit) * 100)))}%`,
+                            background: status.owed > card.credit_limit ? 'var(--over)' : 'var(--accent)',
+                          }}
+                        />
                       </div>
-                      {activity.payments.map((tx) => (
-                        <div key={tx.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', padding: '0.15rem 0' }}>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                        {formatMoney(status.available)} available of {formatMoney(card.credit_limit)} limit
+                      </div>
+                    </>
+                  )}
+                  {status.daysUntilDue != null && (
+                    <div style={{ fontSize: '0.78rem', color: status.daysUntilDue <= 3 ? 'var(--over)' : 'var(--text-muted)' }}>
+                      {status.daysUntilDue <= 0
+                        ? `Due today (${status.nextDueDate!.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`
+                        : `Due in ${status.daysUntilDue} day${status.daysUntilDue === 1 ? '' : 's'} (${status.nextDueDate!.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`}
+                    </div>
+                  )}
+
+                  <div style={{ marginTop: '0.6rem', paddingTop: '0.6rem', borderTop: '1px solid var(--border)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: '0.3rem' }}>
+                      <span style={{ fontWeight: 600 }}>
+                        {activity.cycleStart ? 'This billing cycle' : 'Charged so far'}
+                      </span>
+                      <span style={{ color: 'var(--over)' }}>{formatMoney(activity.totalCharged)}</span>
+                    </div>
+                    {activity.charges.length === 0 ? (
+                      <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: 0 }}>Nothing charged yet.</p>
+                    ) : (
+                      activity.charges.map((tx) => (
+                        <div key={tx.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.78rem', padding: '0.15rem 0' }}>
                           <span style={{ color: 'var(--text-muted)' }}>
-                            {new Date(tx.occurred_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                            {new Date(tx.occurred_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · {chargeLabel(tx)}
                           </span>
                           <span>{formatMoney(tx.amount)}</span>
                         </div>
-                      ))}
-                    </>
-                  )}
-                </div>
+                      ))
+                    )}
 
-                <div style={{ marginTop: '0.6rem', paddingTop: '0.6rem', borderTop: '1px solid var(--border)' }}>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.3rem' }}>
-                    Log a payment <span style={{ fontWeight: 400 }}>- backdate it if it's a past payment you're catching up on</span>
+                    {activity.payments.length > 0 && (
+                      <>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', margin: '0.5rem 0 0.3rem' }}>
+                          <span style={{ fontWeight: 600 }}>Paid {activity.cycleStart ? 'this cycle' : 'so far'}</span>
+                          <span style={{ color: 'var(--good)' }}>{formatMoney(activity.totalPaid)}</span>
+                        </div>
+                        {activity.payments.map((tx) => (
+                          <div key={tx.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', padding: '0.15rem 0' }}>
+                            <span style={{ color: 'var(--text-muted)' }}>
+                              {new Date(tx.occurred_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · from {fromAccountName(tx.from_account_id)}
+                            </span>
+                            <span>{formatMoney(tx.amount)}</span>
+                          </div>
+                        ))}
+                      </>
+                    )}
                   </div>
-                  <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.4rem' }}>
-                    <input
-                      className="input"
-                      type="number"
-                      placeholder="₱ paid"
-                      value={paymentAmountByCard[card.id] ?? ''}
-                      onChange={(e) => setPaymentAmountByCard({ ...paymentAmountByCard, [card.id]: e.target.value })}
-                    />
-                    <select
-                      className="input"
-                      value={paymentFromByCard[card.id] ?? ''}
-                      onChange={(e) => setPaymentFromByCard({ ...paymentFromByCard, [card.id]: e.target.value })}
+
+                  <div style={{ marginTop: '0.6rem', paddingTop: '0.6rem', borderTop: '1px solid var(--border)' }}>
+                    <button
+                      className="btn btn-secondary"
+                      style={{ fontSize: '0.78rem' }}
+                      onClick={() => setHistoryExpandedByCard({ ...historyExpandedByCard, [card.id]: !historyExpanded })}
                     >
-                      <option value="">From which account?</option>
-                      {accounts.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.name}
-                        </option>
-                      ))}
-                    </select>
+                      {historyExpanded ? 'Hide' : 'Show'} full history ({allTime.charges.length + allTime.payments.length})
+                    </button>
+                    {historyExpanded && (
+                      <div style={{ marginTop: '0.5rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: '0.3rem' }}>
+                          <span style={{ fontWeight: 600 }}>Charged to this card, all-time</span>
+                          <span style={{ color: 'var(--over)' }}>{formatMoney(allTime.totalCharged)}</span>
+                        </div>
+                        {allTime.charges.length === 0 ? (
+                          <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: 0 }}>Nothing charged yet.</p>
+                        ) : (
+                          allTime.charges.map((tx) => (
+                            <div key={tx.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.78rem', padding: '0.15rem 0' }}>
+                              <span style={{ color: 'var(--text-muted)' }}>
+                                {new Date(tx.occurred_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} · {chargeLabel(tx)}
+                              </span>
+                              <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                {formatMoney(tx.amount)}
+                                <button
+                                  className="btn btn-secondary"
+                                  style={{ padding: '0.1rem 0.4rem', fontSize: '0.7rem' }}
+                                  onClick={() => softDeleteRecord('transactions', tx.id)}
+                                >
+                                  ✕
+                                </button>
+                              </span>
+                            </div>
+                          ))
+                        )}
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', margin: '0.6rem 0 0.3rem' }}>
+                          <span style={{ fontWeight: 600 }}>Paid back from other accounts, all-time</span>
+                          <span style={{ color: 'var(--good)' }}>{formatMoney(allTime.totalPaid)}</span>
+                        </div>
+                        {allTime.payments.length === 0 ? (
+                          <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: 0 }}>No payments logged yet.</p>
+                        ) : (
+                          allTime.payments.map((tx) => (
+                            <div key={tx.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.78rem', padding: '0.15rem 0' }}>
+                              <span style={{ color: 'var(--text-muted)' }}>
+                                {new Date(tx.occurred_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} · from {fromAccountName(tx.from_account_id)}
+                              </span>
+                              <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                {formatMoney(tx.amount)}
+                                <button
+                                  className="btn btn-secondary"
+                                  style={{ padding: '0.1rem 0.4rem', fontSize: '0.7rem' }}
+                                  onClick={() => softDeleteRecord('transactions', tx.id)}
+                                >
+                                  ✕
+                                </button>
+                              </span>
+                            </div>
+                          ))
+                        )}
+                        <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.5rem', marginBottom: 0 }}>
+                          Need to change an amount or date instead of removing it? Edit it from the Transactions page.
+                        </p>
+                      </div>
+                    )}
                   </div>
-                  <div style={{ display: 'flex', gap: '0.4rem' }}>
+
+                  <div style={{ marginTop: '0.6rem', paddingTop: '0.6rem', borderTop: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.3rem' }}>
+                      Log a payment <span style={{ fontWeight: 400 }}>- backdate it if it's a past payment you're catching up on</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.4rem' }}>
+                      <input
+                        className="input"
+                        type="number"
+                        placeholder="₱ paid"
+                        value={paymentAmountByCard[card.id] ?? ''}
+                        onChange={(e) => setPaymentAmountByCard({ ...paymentAmountByCard, [card.id]: e.target.value })}
+                      />
+                      <select
+                        className="input"
+                        value={paymentFromByCard[card.id] ?? ''}
+                        onChange={(e) => setPaymentFromByCard({ ...paymentFromByCard, [card.id]: e.target.value })}
+                      >
+                        <option value="">From which account?</option>
+                        {accounts.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.4rem' }}>
+                      <input
+                        className="input"
+                        type="date"
+                        value={paymentDateByCard[card.id] ?? ''}
+                        onChange={(e) => setPaymentDateByCard({ ...paymentDateByCard, [card.id]: e.target.value })}
+                      />
+                      <button className="btn btn-primary" onClick={() => logPayment(card)}>
+                        Log
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: '0.6rem', paddingTop: '0.6rem', borderTop: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.3rem' }}>
+                      Pay off {formatMoney(status.owed)} by:
+                    </div>
                     <input
                       className="input"
                       type="date"
-                      value={paymentDateByCard[card.id] ?? ''}
-                      onChange={(e) => setPaymentDateByCard({ ...paymentDateByCard, [card.id]: e.target.value })}
+                      value={payoffDate ?? ''}
+                      onChange={(e) => setPayoffDateByCard({ ...payoffDateByCard, [card.id]: e.target.value })}
                     />
-                    <button className="btn btn-primary" onClick={() => logPayment(card)}>
-                      Log
-                    </button>
+                    {payoffPlan && (
+                      <div style={{ marginTop: '0.5rem' }}>
+                        <p style={{ fontSize: '0.9rem', margin: 0 }}>
+                          Set aside <strong>{formatMoney(payoffPlan.requiredWeeklyPayment)}/week</strong> for{' '}
+                          {payoffPlan.weeksLeft} week{payoffPlan.weeksLeft === 1 ? '' : 's'}.
+                        </p>
+                        {payoffFitsSafely === false ? (
+                          <div className="pill pill-watch" style={{ marginTop: '0.4rem' }}>
+                            That's more than your {formatMoney(safeToSpend)} safe-to-spend can cover right now
+                          </div>
+                        ) : (
+                          <div className="pill pill-good" style={{ marginTop: '0.4rem' }}>
+                            Fits within your safe-to-spend
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
-
-                <div style={{ marginTop: '0.6rem', paddingTop: '0.6rem', borderTop: '1px solid var(--border)' }}>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.3rem' }}>
-                    Pay off {formatMoney(status.owed)} by:
-                  </div>
-                  <input
-                    className="input"
-                    type="date"
-                    value={payoffDate ?? ''}
-                    onChange={(e) => setPayoffDateByCard({ ...payoffDateByCard, [card.id]: e.target.value })}
-                  />
-                  {payoffPlan && (
-                    <div style={{ marginTop: '0.5rem' }}>
-                      <p style={{ fontSize: '0.9rem', margin: 0 }}>
-                        Set aside <strong>{formatMoney(payoffPlan.requiredWeeklyPayment)}/week</strong> for{' '}
-                        {payoffPlan.weeksLeft} week{payoffPlan.weeksLeft === 1 ? '' : 's'}.
-                      </p>
-                      {payoffFitsSafely === false ? (
-                        <div className="pill pill-watch" style={{ marginTop: '0.4rem' }}>
-                          That's more than your {formatMoney(safeToSpend)} safe-to-spend can cover right now
-                        </div>
-                      ) : (
-                        <div className="pill pill-good" style={{ marginTop: '0.4rem' }}>
-                          Fits within your safe-to-spend
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )
-          })}
-        </section>
+              )
+            })}
+          </section>
+        </>
       )}
-
-      <section className="card" style={{ marginBottom: '1rem' }}>
-        <h2 style={{ fontSize: '0.95rem', marginTop: 0 }}>By account</h2>
-        {byAccount.length > 0 ? (
-          <BarChart items={byAccount} formatValue={formatMoney} />
-        ) : (
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>No accounts yet.</p>
-        )}
-      </section>
-
-      {byInstitution.length > 1 && (
-        <section className="card" style={{ marginBottom: '1rem' }}>
-          <h2 style={{ fontSize: '0.95rem', marginTop: 0 }}>By institution</h2>
-          <BarChart items={byInstitution} formatValue={formatMoney} />
-        </section>
-      )}
-
-      {byKind.length > 1 && (
-        <section className="card" style={{ marginBottom: '1rem' }}>
-          <h2 style={{ fontSize: '0.95rem', marginTop: 0 }}>By type</h2>
-          <BarChart items={byKind} formatValue={formatMoney} />
-        </section>
-      )}
-
-      <section className="card" style={{ marginBottom: '1rem' }}>
-        <h2 style={{ fontSize: '0.95rem', marginTop: 0 }}>Savings projection</h2>
-        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: 0 }}>
-          At your actual pace lately ({formatMoney(weeklyNetRate)}/week net), here's where your total could be:
-        </p>
-        {MILESTONES.map((m) => (
-          <div key={m.label} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.2rem 0', fontSize: '0.85rem' }}>
-            <span>In {m.label}</span>
-            <span style={{ fontWeight: 600 }}>{formatMoney(total + weeklyNetRate * m.weeks)}</span>
-          </div>
-        ))}
-
-        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '1rem', marginBottom: '0.4rem' }}>
-          Or play with your own numbers:
-        </p>
-        <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.4rem' }}>
-          <input
-            className="input"
-            type="number"
-            placeholder="₱ amount"
-            value={whatIfAmount}
-            onChange={(e) => setWhatIfAmount(e.target.value)}
-          />
-          <select className="input" value={whatIfPeriod} onChange={(e) => setWhatIfPeriod(e.target.value as 'weekly' | 'monthly')}>
-            <option value="weekly">per week</option>
-            <option value="monthly">per month</option>
-          </select>
-        </div>
-        <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
-          <span style={{ fontSize: '0.85rem' }}>by</span>
-          <input className="input" type="date" value={whatIfDate} onChange={(e) => setWhatIfDate(e.target.value)} />
-        </div>
-        {whatIfAmount && whatIfTargetDate && (
-          <p style={{ fontSize: '0.9rem', marginTop: '0.6rem', marginBottom: 0 }}>
-            By{' '}
-            {whatIfTargetDate.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}, you'd
-            have <strong>{formatMoney(whatIfProjected)}</strong>
-            <span style={{ color: 'var(--text-muted)' }}>
-              {' '}
-              ({whatIfPeriodsUntil} {whatIfPeriod === 'weekly' ? 'week' : 'month'}
-              {whatIfPeriodsUntil === 1 ? '' : 's'} of {formatMoney(pesosToCentavos(Number(whatIfAmount) || 0))}/
-              {whatIfPeriod === 'weekly' ? 'week' : 'month'})
-            </span>
-            .
-          </p>
-        )}
-      </section>
-
-      <h2 style={{ fontSize: '1rem' }}>All accounts</h2>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-        {accounts.map((a) => (
-          <div key={a.id} className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <div style={{ fontWeight: 600 }}>{a.name}</div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
-                {a.institution && <span className="pill" style={{ marginRight: '0.35rem' }}>{a.institution}</span>}
-                <span className="pill">{a.kind}</span>
-              </div>
-            </div>
-            <div style={{ fontWeight: 700, fontSize: '1.05rem' }}>{formatMoney(balances.get(a.id) ?? 0)}</div>
-          </div>
-        ))}
-      </div>
     </div>
   )
 }

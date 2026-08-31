@@ -17,6 +17,17 @@ export function creditOwed(account: Account, transactions: Transaction[]): numbe
   return owed
 }
 
+/**
+ * The starting_balance that makes the card's computed owed amount equal `desiredOwed`, given its
+ * existing transaction history. Editing starting_balance directly would stack on top of that
+ * history instead of replacing it, so this back-solves for the value that lands exactly on the
+ * desired absolute total.
+ */
+export function correctedStartingBalanceForOwed(account: Account, transactions: Transaction[], desiredOwed: number): number {
+  const transactionDelta = creditOwed(account, transactions) - account.starting_balance
+  return desiredOwed - transactionDelta
+}
+
 function clampToMonth(year: number, month: number, day: number): Date {
   const lastDay = new Date(year, month + 1, 0).getDate()
   return new Date(year, month, Math.min(day, lastDay))
@@ -47,20 +58,17 @@ export interface CreditCycleActivity {
   totalPaid: number
 }
 
-/** This billing cycle's charges and payments for a card (or all-time, if no due day is set yet). */
-export function creditCycleActivity(account: Account, transactions: Transaction[], reference: Date): CreditCycleActivity {
-  const cycleStart = account.statement_due_day ? previousStatementDueDate(account.statement_due_day, reference) : null
-
-  const inCycle = (tx: Transaction) => !cycleStart || new Date(tx.occurred_at) >= cycleStart
+function computeCreditActivity(account: Account, transactions: Transaction[], since: Date | null): CreditCycleActivity {
+  const inRange = (tx: Transaction) => !since || new Date(tx.occurred_at) >= since
   const charges = transactions
-    .filter((tx) => !tx.deleted_at && tx.from_account_id === account.id && inCycle(tx))
+    .filter((tx) => !tx.deleted_at && tx.from_account_id === account.id && inRange(tx))
     .sort((a, b) => b.occurred_at.localeCompare(a.occurred_at))
   const payments = transactions
-    .filter((tx) => !tx.deleted_at && tx.to_account_id === account.id && inCycle(tx))
+    .filter((tx) => !tx.deleted_at && tx.to_account_id === account.id && inRange(tx))
     .sort((a, b) => b.occurred_at.localeCompare(a.occurred_at))
 
   return {
-    cycleStart,
+    cycleStart: since,
     charges,
     payments,
     totalCharged: charges.reduce((sum, tx) => sum + tx.amount, 0),
@@ -68,10 +76,15 @@ export function creditCycleActivity(account: Account, transactions: Transaction[
   }
 }
 
-/** Total charged to the card since the start of the current billing cycle (null if no due day is set). */
-export function chargesSinceLastStatement(account: Account, transactions: Transaction[], reference: Date): number | null {
-  if (!account.statement_due_day) return null
-  return creditCycleActivity(account, transactions, reference).totalCharged
+/** This billing cycle's charges and payments for a card (or all-time, if no due day is set yet). */
+export function creditCycleActivity(account: Account, transactions: Transaction[], reference: Date): CreditCycleActivity {
+  const cycleStart = account.statement_due_day ? previousStatementDueDate(account.statement_due_day, reference) : null
+  return computeCreditActivity(account, transactions, cycleStart)
+}
+
+/** Every charge and payment ever logged against the card, most recent first. */
+export function creditAllTimeActivity(account: Account, transactions: Transaction[]): CreditCycleActivity {
+  return computeCreditActivity(account, transactions, null)
 }
 
 export interface CreditPayoffPlan {

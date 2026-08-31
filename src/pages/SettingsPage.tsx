@@ -3,7 +3,7 @@ import { PageHeader } from '../components/PageHeader'
 import { useAccounts, useCategories, useSettings, useTransactions } from '../hooks/useData'
 import { useAuth } from '../lib/auth'
 import { accountBalance, allAccountBalances } from '../lib/calc/balances'
-import { computeCreditCardStatus, creditOwed } from '../lib/calc/credit'
+import { computeCreditCardStatus, correctedStartingBalanceForOwed } from '../lib/calc/credit'
 import { createRecord, updateRecord } from '../lib/mutate'
 import { formatMoney, pesosToCentavos } from '../lib/money'
 import type { Account, AccountKind, Category, UserSettings } from '../lib/types'
@@ -75,10 +75,12 @@ export function SettingsPage() {
       // contributed, under whichever formula the (possibly just-changed) kind uses, and set
       // starting_balance so the result lands exactly on the value the user typed.
       const desired = pesosToCentavos(Number(editBalance))
-      const currentComputed =
-        editKind === 'credit' ? creditOwed(account, transactions) : accountBalance(account, transactions)
-      const transactionDelta = currentComputed - account.starting_balance
-      startingBalancePatch = { starting_balance: desired - transactionDelta }
+      startingBalancePatch = {
+        starting_balance:
+          editKind === 'credit'
+            ? correctedStartingBalanceForOwed(account, transactions, desired)
+            : desired - (accountBalance(account, transactions) - account.starting_balance),
+      }
     }
 
     await updateRecord<Account>('accounts', account.id, {
