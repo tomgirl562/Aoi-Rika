@@ -3,10 +3,10 @@ import { useMemo, useState } from 'react'
 import { BarChart, type BarChartItem } from '../components/BarChart'
 import { PageHeader } from '../components/PageHeader'
 import { useAccounts, useReimbursements, useSettings, useTransactions } from '../hooks/useData'
-import { allAccountBalances } from '../lib/calc/balances'
-import { computeCreditCardStatus } from '../lib/calc/credit'
+import { accountBalance, allAccountBalances } from '../lib/calc/balances'
+import { chargesSinceLastStatement, computeCreditCardStatus, computeCreditPayoffPlan } from '../lib/calc/credit'
 import { outstandingTotals } from '../lib/calc/reimbursements'
-import { trailingAverageWeeklyNet } from '../lib/calc/weekly'
+import { computeSafeToSpend, resolveSafetyNet, trailingAverageMonthlyExpense, trailingAverageWeeklyNet } from '../lib/calc/weekly'
 import { formatMoney, pesosToCentavos } from '../lib/money'
 
 const SERIES_VARS = [
@@ -37,6 +37,7 @@ export function BalancesPage() {
   const [whatIfAmount, setWhatIfAmount] = useState('')
   const [whatIfPeriod, setWhatIfPeriod] = useState<'weekly' | 'monthly'>('weekly')
   const [whatIfDate, setWhatIfDate] = useState('')
+  const [payoffDateByCard, setPayoffDateByCard] = useState<Record<string, string>>({})
 
   const now = new Date()
   const weekStartDay = settings?.week_start_day ?? 1
@@ -85,6 +86,20 @@ export function BalancesPage() {
 
   const reimbTotals = outstandingTotals(reimbursements)
   const projectedTotal = total + reimbTotals.owedToMe - reimbTotals.iOwe
+
+  const safeToSpend = useMemo(() => {
+    const spendingAccount = accounts.find((a) => a.kind === 'spending')
+    if (!spendingAccount) return 0
+    const balance = accountBalance(spendingAccount, transactions)
+    const trailingMonthly = trailingAverageMonthlyExpense(transactions, now, weekStartDay)
+    const safetyNet = resolveSafetyNet(
+      settings?.safety_net_override_amount ?? null,
+      settings?.safety_net_auto_months ?? 1,
+      trailingMonthly,
+    )
+    return computeSafeToSpend(balance, safetyNet, reimbTotals.iOwe).safeToSpend
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accounts, transactions, settings, reimbTotals.iOwe])
 
   const weeklyNetRate = useMemo(
     () => trailingAverageWeeklyNet(transactions, now, weekStartDay),
@@ -153,8 +168,13 @@ export function BalancesPage() {
           <h2 style={{ fontSize: '0.95rem', marginTop: 0 }}>Credit cards</h2>
           {creditCards.map((card) => {
             const status = computeCreditCardStatus(card, transactions, now)
+            const cycleCharges = chargesSinceLastStatement(card, transactions, now)
+            const payoffDate = payoffDateByCard[card.id]
+            const payoffTarget = payoffDate ? new Date(`${payoffDate}T00:00:00`) : null
+            const payoffPlan = payoffTarget ? computeCreditPayoffPlan(status.owed, payoffTarget, now) : null
+            const payoffFitsSafely = payoffPlan ? payoffPlan.requiredWeeklyPayment <= safeToSpend : null
             return (
-              <div key={card.id} style={{ marginBottom: '0.75rem' }}>
+              <div key={card.id} style={{ marginBottom: '1rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ fontWeight: 600 }}>
                     {card.institution && <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>{card.institution} · </span>}
@@ -178,6 +198,11 @@ export function BalancesPage() {
                     </div>
                   </>
                 )}
+                {cycleCharges != null && (
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                    {formatMoney(cycleCharges)} charged this billing cycle
+                  </div>
+                )}
                 {status.daysUntilDue != null && (
                   <div style={{ fontSize: '0.78rem', color: status.daysUntilDue <= 3 ? 'var(--over)' : 'var(--text-muted)' }}>
                     {status.daysUntilDue <= 0
@@ -185,6 +210,35 @@ export function BalancesPage() {
                       : `Due in ${status.daysUntilDue} day${status.daysUntilDue === 1 ? '' : 's'} (${status.nextDueDate!.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`}
                   </div>
                 )}
+
+                <div style={{ marginTop: '0.6rem', paddingTop: '0.6rem', borderTop: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.3rem' }}>
+                    Pay off {formatMoney(status.owed)} by:
+                  </div>
+                  <input
+                    className="input"
+                    type="date"
+                    value={payoffDate ?? ''}
+                    onChange={(e) => setPayoffDateByCard({ ...payoffDateByCard, [card.id]: e.target.value })}
+                  />
+                  {payoffPlan && (
+                    <div style={{ marginTop: '0.5rem' }}>
+                      <p style={{ fontSize: '0.9rem', margin: 0 }}>
+                        Set aside <strong>{formatMoney(payoffPlan.requiredWeeklyPayment)}/week</strong> for{' '}
+                        {payoffPlan.weeksLeft} week{payoffPlan.weeksLeft === 1 ? '' : 's'}.
+                      </p>
+                      {payoffFitsSafely === false ? (
+                        <div className="pill pill-watch" style={{ marginTop: '0.4rem' }}>
+                          That's more than your {formatMoney(safeToSpend)} safe-to-spend can cover right now
+                        </div>
+                      ) : (
+                        <div className="pill pill-good" style={{ marginTop: '0.4rem' }}>
+                          Fits within your safe-to-spend
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             )
           })}

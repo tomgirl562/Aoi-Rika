@@ -1,3 +1,4 @@
+import { differenceInCalendarWeeks } from 'date-fns'
 import type { Account, Transaction } from '../types'
 
 /**
@@ -26,6 +27,41 @@ export function nextStatementDueDate(dueDay: number, reference: Date): Date {
   const candidate = clampToMonth(reference.getFullYear(), reference.getMonth(), dueDay)
   if (candidate >= reference) return candidate
   return clampToMonth(reference.getFullYear(), reference.getMonth() + 1, dueDay)
+}
+
+/**
+ * The most recent due date before `reference` - used as the start of the current billing cycle.
+ * Always exactly one month before whichever due date nextStatementDueDate would return, since that
+ * date is by definition the first one on or after `reference`.
+ */
+export function previousStatementDueDate(dueDay: number, reference: Date): Date {
+  const next = nextStatementDueDate(dueDay, reference)
+  return clampToMonth(next.getFullYear(), next.getMonth() - 1, dueDay)
+}
+
+/** Total charged to the card since the start of the current billing cycle (null if no due day is set). */
+export function chargesSinceLastStatement(account: Account, transactions: Transaction[], reference: Date): number | null {
+  if (!account.statement_due_day) return null
+  const cycleStart = previousStatementDueDate(account.statement_due_day, reference)
+  let total = 0
+  for (const tx of transactions) {
+    if (tx.deleted_at) continue
+    if (tx.from_account_id !== account.id) continue
+    if (new Date(tx.occurred_at) < cycleStart) continue
+    total += tx.amount
+  }
+  return total
+}
+
+export interface CreditPayoffPlan {
+  weeksLeft: number
+  requiredWeeklyPayment: number
+}
+
+/** What it takes to clear the current owed balance by a chosen target date. */
+export function computeCreditPayoffPlan(owed: number, targetDate: Date, reference: Date): CreditPayoffPlan {
+  const weeksLeft = Math.max(1, differenceInCalendarWeeks(targetDate, reference))
+  return { weeksLeft, requiredWeeklyPayment: Math.ceil(owed / weeksLeft) }
 }
 
 export interface CreditCardStatus {

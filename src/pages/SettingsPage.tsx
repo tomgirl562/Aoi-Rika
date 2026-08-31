@@ -297,6 +297,10 @@ export function SettingsPage() {
               <option value="credit">credit card</option>
             </select>
           </div>
+          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '-0.15rem 0 0' }}>
+            Have a credit card? Pick <strong>credit card</strong> above first - it's the only way its balance stays
+            excluded from your totals as a debt instead of counted as cash.
+          </p>
           <div style={{ display: 'flex', gap: '0.4rem' }}>
             <input
               className="input"
