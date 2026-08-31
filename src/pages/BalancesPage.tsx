@@ -1,3 +1,4 @@
+import { differenceInCalendarMonths, differenceInCalendarWeeks } from 'date-fns'
 import { useMemo, useState } from 'react'
 import { BarChart, type BarChartItem } from '../components/BarChart'
 import { PageHeader } from '../components/PageHeader'
@@ -35,7 +36,7 @@ export function BalancesPage() {
 
   const [whatIfAmount, setWhatIfAmount] = useState('')
   const [whatIfPeriod, setWhatIfPeriod] = useState<'weekly' | 'monthly'>('weekly')
-  const [whatIfCount, setWhatIfCount] = useState('')
+  const [whatIfDate, setWhatIfDate] = useState('')
 
   const now = new Date()
   const weekStartDay = settings?.week_start_day ?? 1
@@ -91,7 +92,16 @@ export function BalancesPage() {
     [transactions, weekStartDay],
   )
 
-  const whatIfProjected = total + pesosToCentavos(Number(whatIfAmount) || 0) * (Number(whatIfCount) || 0)
+  const whatIfTargetDate = whatIfDate ? new Date(`${whatIfDate}T00:00:00`) : null
+  const whatIfPeriodsUntil = whatIfTargetDate
+    ? Math.max(
+        0,
+        whatIfPeriod === 'weekly'
+          ? differenceInCalendarWeeks(whatIfTargetDate, now)
+          : differenceInCalendarMonths(whatIfTargetDate, now),
+      )
+    : 0
+  const whatIfProjected = total + pesosToCentavos(Number(whatIfAmount) || 0) * whatIfPeriodsUntil
 
   return (
     <div>
@@ -233,19 +243,21 @@ export function BalancesPage() {
           </select>
         </div>
         <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
-          <span style={{ fontSize: '0.85rem' }}>for</span>
-          <input
-            className="input"
-            type="number"
-            placeholder="how many"
-            value={whatIfCount}
-            onChange={(e) => setWhatIfCount(e.target.value)}
-          />
-          <span style={{ fontSize: '0.85rem' }}>{whatIfPeriod === 'weekly' ? 'weeks' : 'months'}</span>
+          <span style={{ fontSize: '0.85rem' }}>by</span>
+          <input className="input" type="date" value={whatIfDate} onChange={(e) => setWhatIfDate(e.target.value)} />
         </div>
-        {whatIfAmount && whatIfCount && (
+        {whatIfAmount && whatIfTargetDate && (
           <p style={{ fontSize: '0.9rem', marginTop: '0.6rem', marginBottom: 0 }}>
-            You'd have <strong>{formatMoney(whatIfProjected)}</strong>.
+            By{' '}
+            {whatIfTargetDate.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}, you'd
+            have <strong>{formatMoney(whatIfProjected)}</strong>
+            <span style={{ color: 'var(--text-muted)' }}>
+              {' '}
+              ({whatIfPeriodsUntil} {whatIfPeriod === 'weekly' ? 'week' : 'month'}
+              {whatIfPeriodsUntil === 1 ? '' : 's'} of {formatMoney(pesosToCentavos(Number(whatIfAmount) || 0))}/
+              {whatIfPeriod === 'weekly' ? 'week' : 'month'})
+            </span>
+            .
           </p>
         )}
       </section>
