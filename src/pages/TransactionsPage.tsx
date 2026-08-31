@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
 import { PageHeader } from '../components/PageHeader'
-import { useAccounts, useCategories, useGoals, useMerchants, useTransactions } from '../hooks/useData'
+import { useAccounts, useCategories, useGoalContributions, useGoals, useMerchants, useTransactions } from '../hooks/useData'
 import { useAuth } from '../lib/auth'
-import { createRecord, softDeleteRecord } from '../lib/mutate'
+import { createRecord, softDeleteRecord, updateRecord } from '../lib/mutate'
 import { formatMoney, pesosToCentavos } from '../lib/money'
 import type { GoalContribution, Merchant, Transaction, TransactionType } from '../lib/types'
 
@@ -20,6 +20,7 @@ export function TransactionsPage() {
   const goals = useGoals().filter((g) => g.status === 'active')
   const merchants = useMerchants()
   const transactions = useTransactions()
+  const goalContributions = useGoalContributions()
 
   const [type, setType] = useState<TransactionType>('expense')
   const [amount, setAmount] = useState('')
@@ -32,6 +33,11 @@ export function TransactionsPage() {
   const [occurredAt, setOccurredAt] = useState(() => new Date().toISOString().slice(0, 16))
   const [allocations, setAllocations] = useState<GoalAllocation[]>([])
   const [error, setError] = useState<string | null>(null)
+
+  const [editingTxId, setEditingTxId] = useState<string | null>(null)
+  const [editAmount, setEditAmount] = useState('')
+  const [editOccurredAt, setEditOccurredAt] = useState('')
+  const [editNote, setEditNote] = useState('')
 
   const trimmedMerchantName = merchantName.trim()
   const existingMerchant = merchants.find((m) => m.name.trim().toLowerCase() === trimmedMerchantName.toLowerCase())
@@ -56,6 +62,35 @@ export function TransactionsPage() {
     setMerchantName('')
     setMerchantType('')
     setAllocations([])
+  }
+
+  // Amount is locked once a transaction feeds a goal's progress or a reimbursement's tracked
+  // amount, since those live as separate numbers elsewhere and editing here wouldn't update them
+  // too - date and note stay editable so backdating a mistaken entry is still always possible.
+  function isAmountLocked(tx: Transaction): boolean {
+    if (tx.is_reimbursement || tx.reimbursement_id) return true
+    return goalContributions.some((c) => c.transaction_id === tx.id)
+  }
+
+  function startEditTransaction(tx: Transaction) {
+    setEditingTxId(tx.id)
+    setEditAmount((tx.amount / 100).toString())
+    setEditOccurredAt(tx.occurred_at.slice(0, 16))
+    setEditNote(tx.note ?? '')
+  }
+
+  async function saveEditTransaction(tx: Transaction) {
+    const patch: Partial<Transaction> = {
+      occurred_at: new Date(editOccurredAt).toISOString(),
+      note: editNote.trim() || null,
+    }
+    if (!isAmountLocked(tx)) {
+      const amountNum = Number(editAmount)
+      if (!amountNum || amountNum <= 0) return
+      patch.amount = pesosToCentavos(amountNum)
+    }
+    await updateRecord<Transaction>('transactions', tx.id, patch)
+    setEditingTxId(null)
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -301,32 +336,79 @@ export function TransactionsPage() {
       <h2 style={{ fontSize: '1rem' }}>Recent</h2>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
         {sortedTransactions.map((tx) => (
-          <div key={tx.id} className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <div style={{ fontWeight: 600 }}>
-                {tx.type === 'expense' && `${accountName(tx.from_account_id)} → ${categoryName(tx.category_id)}`}
-                {tx.type === 'income' && `${accountName(tx.to_account_id)} ← income`}
-                {tx.type === 'transfer' && `${accountName(tx.from_account_id)} → ${accountName(tx.to_account_id)}`}
-                {merchantLabel(tx.merchant_id) && (
-                  <span className="pill" style={{ marginLeft: '0.4rem' }}>
-                    {merchantLabel(tx.merchant_id)}
-                  </span>
+          <div key={tx.id} className="card">
+            {editingTxId === tx.id ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                <div style={{ fontWeight: 600 }}>
+                  {tx.type === 'expense' && `${accountName(tx.from_account_id)} → ${categoryName(tx.category_id)}`}
+                  {tx.type === 'income' && `${accountName(tx.to_account_id)} ← income`}
+                  {tx.type === 'transfer' && `${accountName(tx.from_account_id)} → ${accountName(tx.to_account_id)}`}
+                </div>
+                {isAmountLocked(tx) ? (
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: 0 }}>
+                    Amount ({formatMoney(tx.amount)}) is locked - it's tracked separately by a goal or reimbursement.
+                    Date and note can still be fixed below.
+                  </p>
+                ) : (
+                  <div>
+                    <label className="label">Amount (₱)</label>
+                    <input className="input" type="number" min="0" step="0.01" value={editAmount} onChange={(e) => setEditAmount(e.target.value)} />
+                  </div>
                 )}
-                {tx.is_reimbursement && <span className="pill" style={{ marginLeft: '0.4rem' }}>reimbursement</span>}
+                <div>
+                  <label className="label">When</label>
+                  <input
+                    className="input"
+                    type="datetime-local"
+                    value={editOccurredAt}
+                    onChange={(e) => setEditOccurredAt(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="label">Note</label>
+                  <input className="input" value={editNote} onChange={(e) => setEditNote(e.target.value)} />
+                </div>
+                <div style={{ display: 'flex', gap: '0.4rem' }}>
+                  <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => saveEditTransaction(tx)}>
+                    Save
+                  </button>
+                  <button className="btn btn-secondary" onClick={() => setEditingTxId(null)}>
+                    Cancel
+                  </button>
+                </div>
               </div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                {new Date(tx.occurred_at).toLocaleString()} {tx.note ? `· ${tx.note}` : ''}
+            ) : (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontWeight: 600 }}>
+                    {tx.type === 'expense' && `${accountName(tx.from_account_id)} → ${categoryName(tx.category_id)}`}
+                    {tx.type === 'income' && `${accountName(tx.to_account_id)} ← income`}
+                    {tx.type === 'transfer' && `${accountName(tx.from_account_id)} → ${accountName(tx.to_account_id)}`}
+                    {merchantLabel(tx.merchant_id) && (
+                      <span className="pill" style={{ marginLeft: '0.4rem' }}>
+                        {merchantLabel(tx.merchant_id)}
+                      </span>
+                    )}
+                    {tx.is_reimbursement && <span className="pill" style={{ marginLeft: '0.4rem' }}>reimbursement</span>}
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    {new Date(tx.occurred_at).toLocaleString()} {tx.note ? `· ${tx.note}` : ''}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ fontWeight: 700, color: tx.type === 'income' ? 'var(--good)' : undefined }}>
+                    {tx.type === 'expense' ? '-' : tx.type === 'income' ? '+' : ''}
+                    {formatMoney(tx.amount)}
+                  </span>
+                  <button className="btn btn-secondary" onClick={() => startEditTransaction(tx)}>
+                    Edit
+                  </button>
+                  <button className="btn btn-secondary" onClick={() => softDeleteRecord('transactions', tx.id)}>
+                    ✕
+                  </button>
+                </div>
               </div>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <span style={{ fontWeight: 700, color: tx.type === 'income' ? 'var(--good)' : undefined }}>
-                {tx.type === 'expense' ? '-' : tx.type === 'income' ? '+' : ''}
-                {formatMoney(tx.amount)}
-              </span>
-              <button className="btn btn-secondary" onClick={() => softDeleteRecord('transactions', tx.id)}>
-                ✕
-              </button>
-            </div>
+            )}
           </div>
         ))}
         {sortedTransactions.length === 0 && <p style={{ color: 'var(--text-muted)' }}>No transactions yet.</p>}

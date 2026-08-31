@@ -46,6 +46,7 @@ export function BalancesPage() {
   const [payoffDateByCard, setPayoffDateByCard] = useState<Record<string, string>>({})
   const [paymentAmountByCard, setPaymentAmountByCard] = useState<Record<string, string>>({})
   const [paymentFromByCard, setPaymentFromByCard] = useState<Record<string, string>>({})
+  const [paymentDateByCard, setPaymentDateByCard] = useState<Record<string, string>>({})
 
   const categoryName = (id: string | null) => categories.find((c) => c.id === id)?.name ?? null
   const merchantName = (id: string | null) => merchants.find((m) => m.id === id)?.name ?? null
@@ -55,10 +56,11 @@ export function BalancesPage() {
     const pesos = Number(paymentAmountByCard[card.id])
     const fromAccountId = paymentFromByCard[card.id]
     if (!pesos || pesos <= 0 || !fromAccountId || !userId) return
+    const dateInput = paymentDateByCard[card.id]
     await createRecord<Transaction>('transactions', userId, {
       type: 'transfer',
       amount: pesosToCentavos(pesos),
-      occurred_at: new Date().toISOString(),
+      occurred_at: dateInput ? new Date(`${dateInput}T12:00:00`).toISOString() : new Date().toISOString(),
       from_account_id: fromAccountId,
       to_account_id: card.id,
       category_id: null,
@@ -69,6 +71,7 @@ export function BalancesPage() {
     })
     setPaymentAmountByCard({ ...paymentAmountByCard, [card.id]: '' })
     setPaymentFromByCard({ ...paymentFromByCard, [card.id]: '' })
+    setPaymentDateByCard({ ...paymentDateByCard, [card.id]: '' })
   }
 
   const now = new Date()
@@ -277,8 +280,10 @@ export function BalancesPage() {
                 </div>
 
                 <div style={{ marginTop: '0.6rem', paddingTop: '0.6rem', borderTop: '1px solid var(--border)' }}>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.3rem' }}>Log a payment</div>
-                  <div style={{ display: 'flex', gap: '0.4rem' }}>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.3rem' }}>
+                    Log a payment <span style={{ fontWeight: 400 }}>- backdate it if it's a past payment you're catching up on</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.4rem' }}>
                     <input
                       className="input"
                       type="number"
@@ -298,6 +303,14 @@ export function BalancesPage() {
                         </option>
                       ))}
                     </select>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.4rem' }}>
+                    <input
+                      className="input"
+                      type="date"
+                      value={paymentDateByCard[card.id] ?? ''}
+                      onChange={(e) => setPaymentDateByCard({ ...paymentDateByCard, [card.id]: e.target.value })}
+                    />
                     <button className="btn btn-primary" onClick={() => logPayment(card)}>
                       Log
                     </button>
