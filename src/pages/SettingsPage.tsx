@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { PageHeader } from '../components/PageHeader'
-import { useAccounts, useCategories, useSettings } from '../hooks/useData'
+import { useAccounts, useCategories, useSettings, useTransactions } from '../hooks/useData'
 import { useAuth } from '../lib/auth'
+import { allAccountBalances } from '../lib/calc/balances'
+import { computeCreditCardStatus } from '../lib/calc/credit'
 import { createRecord, updateRecord } from '../lib/mutate'
 import { formatMoney, pesosToCentavos } from '../lib/money'
 import type { Account, AccountKind, Category, UserSettings } from '../lib/types'
@@ -10,17 +12,23 @@ export function SettingsPage() {
   const { userId, isLocalOnly, signOut } = useAuth()
   const accounts = useAccounts()
   const categories = useCategories()
+  const transactions = useTransactions()
   const settings = useSettings()
+  const balances = allAccountBalances(accounts, transactions)
 
   const [newAccountName, setNewAccountName] = useState('')
   const [newAccountInstitution, setNewAccountInstitution] = useState('')
   const [newAccountKind, setNewAccountKind] = useState<AccountKind>('other')
   const [newAccountBalance, setNewAccountBalance] = useState('')
+  const [newAccountLimit, setNewAccountLimit] = useState('')
+  const [newAccountDueDay, setNewAccountDueDay] = useState('')
   const [editingAccountId, setEditingAccountId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
   const [editInstitution, setEditInstitution] = useState('')
   const [editKind, setEditKind] = useState<AccountKind>('other')
   const [editBalance, setEditBalance] = useState('')
+  const [editLimit, setEditLimit] = useState('')
+  const [editDueDay, setEditDueDay] = useState('')
   const [newCategoryName, setNewCategoryName] = useState('')
   const [safetyNetInput, setSafetyNetInput] = useState('')
   const [allowanceInput, setAllowanceInput] = useState('')
@@ -35,11 +43,15 @@ export function SettingsPage() {
       institution: newAccountInstitution.trim() || null,
       kind: newAccountKind,
       starting_balance: newAccountBalance.trim() ? pesosToCentavos(Number(newAccountBalance)) : 0,
+      credit_limit: newAccountKind === 'credit' && newAccountLimit.trim() ? pesosToCentavos(Number(newAccountLimit)) : null,
+      statement_due_day: newAccountKind === 'credit' && newAccountDueDay.trim() ? Number(newAccountDueDay) : null,
       archived_at: null,
     })
     setNewAccountName('')
     setNewAccountInstitution('')
     setNewAccountBalance('')
+    setNewAccountLimit('')
+    setNewAccountDueDay('')
   }
 
   function startEditAccount(account: Account) {
@@ -48,6 +60,8 @@ export function SettingsPage() {
     setEditInstitution(account.institution ?? '')
     setEditKind(account.kind)
     setEditBalance('')
+    setEditLimit(account.credit_limit != null ? String(account.credit_limit / 100) : '')
+    setEditDueDay(account.statement_due_day != null ? String(account.statement_due_day) : '')
   }
 
   async function saveEditAccount(account: Account) {
@@ -59,6 +73,8 @@ export function SettingsPage() {
       // Balance here is the account's starting balance (before any logged transactions), so
       // leaving it blank keeps whatever was set before instead of silently zeroing it out.
       ...(editBalance.trim() ? { starting_balance: pesosToCentavos(Number(editBalance)) } : {}),
+      credit_limit: editKind === 'credit' && editLimit.trim() ? pesosToCentavos(Number(editLimit)) : null,
+      statement_due_day: editKind === 'credit' && editDueDay.trim() ? Number(editDueDay) : null,
     })
     setEditingAccountId(null)
   }
@@ -193,14 +209,35 @@ export function SettingsPage() {
                   <option value="spending">spending</option>
                   <option value="savings">savings</option>
                   <option value="other">other</option>
+                  <option value="credit">credit card</option>
                 </select>
                 <input
                   className="input"
                   type="number"
-                  placeholder={`Adjust balance (leave blank to keep current)`}
+                  placeholder={editKind === 'credit' ? 'Adjust amount owed (leave blank to keep current)' : 'Adjust balance (leave blank to keep current)'}
                   value={editBalance}
                   onChange={(e) => setEditBalance(e.target.value)}
                 />
+                {editKind === 'credit' && (
+                  <div style={{ display: 'flex', gap: '0.4rem' }}>
+                    <input
+                      className="input"
+                      type="number"
+                      placeholder="Credit limit (₱)"
+                      value={editLimit}
+                      onChange={(e) => setEditLimit(e.target.value)}
+                    />
+                    <input
+                      className="input"
+                      type="number"
+                      min="1"
+                      max="31"
+                      placeholder="Due day (1-31)"
+                      value={editDueDay}
+                      onChange={(e) => setEditDueDay(e.target.value)}
+                    />
+                  </div>
+                )}
                 <div style={{ display: 'flex', gap: '0.4rem' }}>
                   <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => saveEditAccount(account)}>
                     Save
@@ -211,12 +248,22 @@ export function SettingsPage() {
                 </div>
               </div>
             ) : (
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
                 <span style={{ opacity: account.archived_at ? 0.5 : 1 }}>
                   {account.institution && <span style={{ color: 'var(--text-muted)' }}>{account.institution} · </span>}
                   {account.name} <span className="pill">{account.kind}</span>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.1rem' }}>
+                    {account.kind === 'credit' ? (
+                      <>
+                        Owed {formatMoney(computeCreditCardStatus(account, transactions, new Date()).owed)}
+                        {account.credit_limit != null && ` of ${formatMoney(account.credit_limit)} limit`}
+                      </>
+                    ) : (
+                      formatMoney(balances.get(account.id) ?? 0)
+                    )}
+                  </div>
                 </span>
-                <div style={{ display: 'flex', gap: '0.4rem' }}>
+                <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0 }}>
                   <button className="btn btn-secondary" onClick={() => startEditAccount(account)}>
                     Edit
                   </button>
@@ -247,20 +294,46 @@ export function SettingsPage() {
               <option value="spending">spending</option>
               <option value="savings">savings</option>
               <option value="other">other</option>
+              <option value="credit">credit card</option>
             </select>
           </div>
           <div style={{ display: 'flex', gap: '0.4rem' }}>
             <input
               className="input"
               type="number"
-              placeholder="Current balance (₱, optional)"
+              placeholder={newAccountKind === 'credit' ? 'Amount currently owed (₱, optional)' : 'Current balance (₱, optional)'}
               value={newAccountBalance}
               onChange={(e) => setNewAccountBalance(e.target.value)}
             />
-            <button className="btn btn-primary" onClick={addAccount}>
-              Add
-            </button>
+            {newAccountKind !== 'credit' && (
+              <button className="btn btn-primary" onClick={addAccount}>
+                Add
+              </button>
+            )}
           </div>
+          {newAccountKind === 'credit' && (
+            <div style={{ display: 'flex', gap: '0.4rem' }}>
+              <input
+                className="input"
+                type="number"
+                placeholder="Credit limit (₱)"
+                value={newAccountLimit}
+                onChange={(e) => setNewAccountLimit(e.target.value)}
+              />
+              <input
+                className="input"
+                type="number"
+                min="1"
+                max="31"
+                placeholder="Due day (1-31)"
+                value={newAccountDueDay}
+                onChange={(e) => setNewAccountDueDay(e.target.value)}
+              />
+              <button className="btn btn-primary" onClick={addAccount}>
+                Add
+              </button>
+            </div>
+          )}
         </div>
       </section>
 

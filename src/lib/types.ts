@@ -1,6 +1,6 @@
 // Shared domain types. Amounts are always integer centavos (₱1.00 = 100) to avoid float drift.
 
-export type AccountKind = 'income' | 'spending' | 'savings' | 'other'
+export type AccountKind = 'income' | 'spending' | 'savings' | 'other' | 'credit'
 
 export interface Account {
   id: string
@@ -8,7 +8,9 @@ export interface Account {
   name: string
   institution: string | null // e.g. BPI, GoTyme, Maya, Cash - free text, optional
   kind: AccountKind
-  starting_balance: number
+  starting_balance: number // for a credit account, the amount already owed
+  credit_limit: number | null // centavos; credit accounts only
+  statement_due_day: number | null // 1-31; credit accounts only
   archived_at: string | null
   created_at: string
   updated_at: string

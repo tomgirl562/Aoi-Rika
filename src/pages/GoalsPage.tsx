@@ -6,7 +6,7 @@ import { accountBalance } from '../lib/calc/balances'
 import { flagGoalsAgainstSafetyNet, projectGoal } from '../lib/calc/goals'
 import { outstandingTotals } from '../lib/calc/reimbursements'
 import { computeSafeToSpend, resolveSafetyNet, trailingAverageMonthlyExpense } from '../lib/calc/weekly'
-import { createRecord } from '../lib/mutate'
+import { createRecord, softDeleteRecord, updateRecord } from '../lib/mutate'
 import { formatMoney, pesosToCentavos } from '../lib/money'
 import type { GoalContribution, SavingsGoal, Transaction } from '../lib/types'
 
@@ -103,6 +103,15 @@ export function GoalsPage() {
     setContributeFrom('')
   }
 
+  async function markComplete(goal: SavingsGoal) {
+    await updateRecord<SavingsGoal>('savings_goals', goal.id, { status: 'completed' })
+  }
+
+  async function deleteGoal(goal: SavingsGoal) {
+    if (!window.confirm(`Remove "${goal.name}"? This won't undo any money already moved, just stops tracking the goal.`)) return
+    await softDeleteRecord('savings_goals', goal.id)
+  }
+
   return (
     <div>
       <PageHeader title="Savings goals" subtitle="Run as many as you like - each tracked on its own." />
@@ -169,17 +178,25 @@ export function GoalsPage() {
             )}
 
             {!isContributing && (
-              <button
-                className="btn btn-secondary btn-block"
-                style={{ marginTop: '0.6rem' }}
-                onClick={() => {
-                  setContributeFor(goal.id)
-                  setContributeAmount('')
-                  setContributeFrom('')
-                }}
-              >
-                Add money
-              </button>
+              <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.6rem' }}>
+                <button
+                  className="btn btn-secondary"
+                  style={{ flex: 1 }}
+                  onClick={() => {
+                    setContributeFor(goal.id)
+                    setContributeAmount('')
+                    setContributeFrom('')
+                  }}
+                >
+                  Add money
+                </button>
+                <button className="btn btn-secondary" onClick={() => markComplete(goal)} title="Mark as done">
+                  ✓ Done
+                </button>
+                <button className="btn btn-secondary" onClick={() => deleteGoal(goal)} title="Remove this goal">
+                  ✕
+                </button>
+              </div>
             )}
             {isContributing && (
               <div style={{ marginTop: '0.6rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>

@@ -13,6 +13,7 @@ import {
   useTransactions,
 } from '../hooks/useData'
 import { allAccountBalances } from '../lib/calc/balances'
+import { computeCreditCardStatus } from '../lib/calc/credit'
 import { projectGoal } from '../lib/calc/goals'
 import { computeMerchantStats } from '../lib/calc/merchants'
 import { outstandingTotals } from '../lib/calc/reimbursements'
@@ -61,10 +62,11 @@ export function Dashboard() {
       .sort((a, b) => b.value - a.value)
   }, [categories, transactions, range])
 
-  const activeAccounts = accounts.filter((a) => !a.archived_at)
-  const balances = allAccountBalances(accounts, transactions)
+  const activeAccounts = accounts.filter((a) => !a.archived_at && a.kind !== 'credit')
+  const creditCards = accounts.filter((a) => !a.archived_at && a.kind === 'credit')
+  const balances = allAccountBalances(activeAccounts, transactions)
   const totalBalance = activeAccounts.reduce((sum, a) => sum + (balances.get(a.id) ?? 0), 0)
-  const topAccounts = [...activeAccounts].sort((a, b) => (balances.get(b.id) ?? 0) - (balances.get(a.id) ?? 0)).slice(0, 4)
+  const sortedAccounts = [...activeAccounts].sort((a, b) => (balances.get(b.id) ?? 0) - (balances.get(a.id) ?? 0))
   const reimbTotals = outstandingTotals(reimbursements)
   const activeGoals = goals.filter((g) => g.status === 'active')
 
@@ -104,7 +106,7 @@ export function Dashboard() {
           {formatMoney(totalBalance)}
         </div>
         <div style={{ textAlign: 'left', marginTop: '0.5rem' }}>
-          {topAccounts.map((a) => (
+          {sortedAccounts.map((a) => (
             <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.2rem 0', fontSize: '0.85rem' }}>
               <span>
                 {a.institution && <span style={{ color: 'var(--text-muted)' }}>{a.institution} · </span>}
@@ -118,6 +120,36 @@ export function Dashboard() {
           View full breakdown →
         </Link>
       </section>
+
+      {creditCards.length > 0 && (
+        <section className="card" style={{ marginBottom: '1rem' }}>
+          <h2 style={{ fontSize: '0.95rem', marginTop: 0 }}>Credit cards</h2>
+          {creditCards.map((card) => {
+            const status = computeCreditCardStatus(card, transactions, now)
+            return (
+              <div key={card.id} style={{ marginBottom: '0.6rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                  <span>
+                    {card.institution && <span style={{ color: 'var(--text-muted)' }}>{card.institution} · </span>}
+                    {card.name}
+                  </span>
+                  <span style={{ fontWeight: 600 }}>
+                    {formatMoney(status.owed)} owed
+                    {card.credit_limit != null && ` · ${formatMoney(status.available)} available`}
+                  </span>
+                </div>
+                {status.daysUntilDue != null && (
+                  <div style={{ fontSize: '0.75rem', color: status.daysUntilDue <= 3 ? 'var(--over)' : 'var(--text-muted)' }}>
+                    {status.daysUntilDue <= 0
+                      ? `Due today (${status.nextDueDate!.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`
+                      : `Due in ${status.daysUntilDue} day${status.daysUntilDue === 1 ? '' : 's'} (${status.nextDueDate!.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </section>
+      )}
 
       <section className="card" style={{ marginBottom: '1rem' }}>
         <h2 style={{ fontSize: '0.95rem', marginTop: 0 }}>In vs out</h2>

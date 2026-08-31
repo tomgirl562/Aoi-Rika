@@ -14,8 +14,10 @@ create table if not exists accounts (
   user_id uuid not null references auth.users(id) on delete cascade,
   name text not null,
   institution text, -- e.g. BPI, GoTyme, Maya, Cash - free text, optional
-  kind text not null check (kind in ('income', 'spending', 'savings', 'other')),
-  starting_balance bigint not null default 0, -- centavos
+  kind text not null check (kind in ('income', 'spending', 'savings', 'other', 'credit')),
+  starting_balance bigint not null default 0, -- centavos; for a credit account, the amount already owed
+  credit_limit bigint, -- centavos; credit accounts only
+  statement_due_day smallint check (statement_due_day is null or (statement_due_day between 1 and 31)), -- credit accounts only
   archived_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),

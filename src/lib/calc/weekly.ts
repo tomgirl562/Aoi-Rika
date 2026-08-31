@@ -28,6 +28,13 @@ export function weeklyTotals(transactions: Transaction[], range: WeekRange): Wee
   return { totalIn, totalOut, net: totalIn - totalOut }
 }
 
+/** Average weekly net (income minus expense) over the trailing N weeks - the "actual pace" basis for savings projections. */
+export function trailingAverageWeeklyNet(transactions: Transaction[], reference: Date, weekStartDay: number, weeks = 4): number {
+  const ranges = trailingWeekRanges(reference, weekStartDay, weeks)
+  const total = ranges.reduce((sum, range) => sum + weeklyTotals(transactions, range).net, 0)
+  return ranges.length > 0 ? total / ranges.length : 0
+}
+
 export function categorySpendInRange(transactions: Transaction[], categoryId: string, range: WeekRange): number {
   return sumInRange(
     transactions,
