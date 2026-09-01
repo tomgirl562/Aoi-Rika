@@ -1,9 +1,11 @@
 import { useState } from 'react'
+import { useLiveQuery } from 'dexie-react-hooks'
 import { PageHeader } from '../components/PageHeader'
 import { useAccounts, useCategories, useSettings, useTransactions } from '../hooks/useData'
 import { useAuth } from '../lib/auth'
 import { accountBalance, allAccountBalances } from '../lib/calc/balances'
 import { computeCreditCardStatus, correctedStartingBalanceForOwed } from '../lib/calc/credit'
+import { countRowsForUser, getStoredLocalUserId, migrateLocalDataToAccount } from '../lib/localMigration'
 import { createRecord, updateRecord } from '../lib/mutate'
 import { formatMoney, pesosToCentavos } from '../lib/money'
 import type { Account, AccountKind, Category, UserSettings } from '../lib/types'
@@ -15,6 +17,24 @@ export function SettingsPage() {
   const transactions = useTransactions()
   const settings = useSettings()
   const balances = allAccountBalances(accounts, transactions)
+
+  const storedLocalUserId = getStoredLocalUserId()
+  const migrationCandidateId = !isLocalOnly && storedLocalUserId && storedLocalUserId !== userId ? storedLocalUserId : null
+  const migratableRows = useLiveQuery(
+    () => (migrationCandidateId ? countRowsForUser(migrationCandidateId) : Promise.resolve(0)),
+    [migrationCandidateId],
+  )
+  const [migrationStatus, setMigrationStatus] = useState<string | null>(null)
+  const [migrating, setMigrating] = useState(false)
+
+  async function importLocalData() {
+    if (!migrationCandidateId || !userId) return
+    setMigrating(true)
+    setMigrationStatus(null)
+    const count = await migrateLocalDataToAccount(migrationCandidateId, userId)
+    setMigrating(false)
+    setMigrationStatus(`Moved ${count} item${count === 1 ? '' : 's'} from this phone into your account.`)
+  }
 
   const [newAccountName, setNewAccountName] = useState('')
   const [newAccountInstitution, setNewAccountInstitution] = useState('')
@@ -145,6 +165,24 @@ export function SettingsPage() {
             Running in local-only mode - add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to enable sync across
             devices. Everything still works offline right now.
           </p>
+        </div>
+      )}
+
+      {migrationCandidateId && (migratableRows ?? 0) > 0 && (
+        <section className="card" style={{ marginBottom: '1rem' }}>
+          <h2 style={{ fontSize: '1rem', marginTop: 0 }}>Import this phone's data</h2>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+            This device still has {migratableRows} item{migratableRows === 1 ? '' : 's'} saved from before you signed
+            in. Move them into your account so they show up on every device.
+          </p>
+          <button className="btn btn-primary" onClick={importLocalData} disabled={migrating}>
+            {migrating ? 'Importing…' : "Import this phone's data"}
+          </button>
+        </section>
+      )}
+      {migrationStatus && (
+        <div className="card" style={{ marginBottom: '1rem' }}>
+          <p style={{ margin: 0, fontSize: '0.85rem' }}>{migrationStatus}</p>
         </div>
       )}
 

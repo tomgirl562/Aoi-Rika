@@ -1,9 +1,8 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { supabase } from './supabase'
+import { LOCAL_USER_KEY } from './localMigration'
 import { seedDefaultsIfNeeded } from './seed'
 import { initSync } from './sync'
-
-const LOCAL_USER_KEY = 'aoi-rika:local-user-id'
 
 function getOrCreateLocalUserId(): string {
   let id = localStorage.getItem(LOCAL_USER_KEY)
